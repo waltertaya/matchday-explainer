@@ -3,16 +3,18 @@ from pptx import Presentation
 import pdfplumber
 import os
 
+from typing import Dict, Tuple
+
 class Parser:
-    def __init__(self, path):
+    def __init__(self, path: str):
         self.path = path
 
-    def parse_txt(self):
+    def parse_txt(self) -> str:
         ''' extract text from txt files '''
         with open(self.path, 'r', encoding='utf-8') as file:
             return file.read()
 
-    def parse_pdf(self):
+    def parse_pdf(self) -> str:
         ''' extract text from pdf file '''
         text = []
 
@@ -24,7 +26,7 @@ class Parser:
 
         return '\n\n'.join(text)
 
-    def parse_docx(self):
+    def parse_docx(self) -> str:
         ''' extract text from word document '''
         doc = DocxDocument(self.path)
         paragraphs = []
@@ -35,7 +37,7 @@ class Parser:
 
         return '\n\n'.join(paragraphs)
 
-    def parse_pptx(self):
+    def parse_pptx(self) -> str:
         ''' extract text from pptx files '''
         prs = Presentation(self.path)
         text = []
@@ -50,7 +52,7 @@ class Parser:
         return '\n\n'.join(text)
 
 
-    def parse(self):
+    def parse(self) -> Tuple[str, Dict]:
         ''' extract text from given document '''
         ext = os.path.splitext(self.path)[1].lower()
 

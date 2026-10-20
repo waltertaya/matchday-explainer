@@ -10,10 +10,10 @@ if __name__ == '__main__':
         print(usage)
         exit(1)
     
-    parser = Parser(sys.argv[1])
+    path = sys.argv[1]
+    parser = Parser(path)
 
     texts, metadata = parser.parse()
+    chunks = chunk_text_by_tokens(texts)
 
-    # print(f'metadata: {metadata}')
-    # print(f'chunks: {chunk_text_by_tokens(texts)}')
-    print(f'First 5 embeddings: {embed_texts(texts)}')
+    print(f'First 5 embeddings: {embed_texts(chunks)}')

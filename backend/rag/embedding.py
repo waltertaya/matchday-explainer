@@ -12,11 +12,11 @@ from . import config
 
 client = OpenAI(
     api_key=config.NVIDIA_OPENAI_API_KEY,
-    base_url="https://integrate.api.nvidia.com/v1",
+    base_url=config.NVIDIA_BASE_URL,
 )
 
 EMBED_CACHE = Path(config.DATA_DIR) / "embeddings_cache.json"
-EXPECTED_DIMENSIONS = 1024
+EXPECTED_DIMENSIONS = config.EMBEDDING_DIMENSIONS
 
 
 def _load_cache():

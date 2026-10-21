@@ -6,6 +6,7 @@ from sqlalchemy.dialects.postgresql import UUID
 from pgvector.sqlalchemy import Vector
 
 from . import db
+from rag.config import EMBEDDING_DIMENSIONS
 
 
 class DocumentChunks(db.Model):
@@ -19,7 +20,7 @@ class DocumentChunks(db.Model):
     content = db.Column(Text, nullable=False)
     source = db.Column(Text)
     page_number = db.Column(Integer)
-    embedding = db.Column(Vector(1024), nullable=False)
+    embedding = db.Column(Vector(EMBEDDING_DIMENSIONS), nullable=False)
 
     created_at = db.Column(
         DateTime(timezone=True),

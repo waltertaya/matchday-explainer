@@ -7,9 +7,9 @@ from sqlalchemy import select
 from api import db
 from api.models import DocumentChunks
 
-from parser import Parser
-from chunker import chunk_text_by_tokens
-from embedding import embed_texts
+from .parser import Parser
+from .chunker import chunk_text_by_tokens
+from .embedding import embed_texts
 from . import config
 
 
@@ -46,9 +46,9 @@ class Indexer:
                     )
 
                 for chunk, embedding in zip(chunks, embeddings):
-                    if len(embedding) != 1024:
+                    if len(embedding) != config.EMBEDDING_DIMENSIONS:
                         raise ValueError(
-                            f"Expected 1024 dimensions, got {len(embedding)}"
+                            f"Expected {config.EMBEDDING_DIMENSIONS} dimensions, got {len(embedding)}"
                         )
 
                     document_chunk = DocumentChunks(
@@ -89,9 +89,9 @@ class Indexer:
             input_type="query",
         )[0]
 
-        if len(query_embedding) != 1024:
+        if len(query_embedding) != config.EMBEDDING_DIMENSIONS:
             raise ValueError(
-                f"Expected 1024 dimensions, got {len(query_embedding)}"
+                f"Expected {config.EMBEDDING_DIMENSIONS} dimensions, got {len(query_embedding)}"
             )
 
         # pgvector's cosine distance operator: <=>.

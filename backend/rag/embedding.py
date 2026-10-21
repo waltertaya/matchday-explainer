@@ -1,67 +1,103 @@
-import os
+
+import hashlib
 import json
 from pathlib import Path
-from typing import List
-from openai import OpenAI
+from typing import List, Optional
+
 import numpy as np
+from openai import OpenAI
+
 from . import config
 
-# development
+
 client = OpenAI(
     api_key=config.NVIDIA_OPENAI_API_KEY,
-    base_url="https://integrate.api.nvidia.com/v1"
+    base_url="https://integrate.api.nvidia.com/v1",
 )
-# production
-# client = OpenAI()
+
 EMBED_CACHE = Path(config.DATA_DIR) / "embeddings_cache.json"
+EXPECTED_DIMENSIONS = 1024
 
 
 def _load_cache():
     if EMBED_CACHE.exists():
-        return json.loads(EMBED_CACHE.read_text())
+        return json.loads(EMBED_CACHE.read_text(encoding="utf-8"))
     return {}
 
 
 def _save_cache(cache: dict):
-    EMBED_CACHE.write_text(json.dumps(cache))
+    EMBED_CACHE.parent.mkdir(parents=True, exist_ok=True)
+    EMBED_CACHE.write_text(
+        json.dumps(cache),
+        encoding="utf-8",
+    )
 
 
-def embed_texts(texts: List[str], model: str = None) -> List[List[float]]:
-    '''Embeddings helper using OpenAI API, with simple caching.
-    '''
-    model = model or config.NVIDIA_EMBEDDING_MODEL # dev
+def _cache_key(text: str, model: str, input_type: str) -> str:
+    value = f"{model}:{input_type}:{text}"
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def embed_texts(
+    texts: List[str],
+    model: Optional[str] = None,
+    input_type: str = "query",
+) -> List[np.ndarray]:
+    """Generate and cache embeddings for text inputs."""
+
+    if not texts:
+        return []
+
+    model = model or config.NVIDIA_EMBEDDING_MODEL
     cache = _load_cache()
-    results = []
-    to_call = []
-    to_call_idx = []
 
-    for i, t in enumerate(texts):
-        key = str(hash(t))
+    results = [None] * len(texts)
+    missing = {}
+
+    for i, text in enumerate(texts):
+        key = _cache_key(text, model, input_type)
+
         if key in cache:
-            results.append(cache[key])
+            results[i] = cache[key]
         else:
-            results.append(None)
-            to_call.append(t)
-            to_call_idx.append(i)
+            # Deduplicate repeated text within this request.
+            missing.setdefault(key, text)
 
-    if to_call:
+    if missing:
+        unique_keys = list(missing.keys())
+        unique_texts = list(missing.values())
+
         response = client.embeddings.create(
-            input=to_call,
+            input=unique_texts,
             model=model,
-            encoding_format="float", # dev
-            extra_body={ # dev
-                "modality": ["text"] * len(to_call),
-                "input_type": "query",
-                "truncate": "NONE"
-            }
+            encoding_format="float",
+            extra_body={
+                "modality": ["text"] * len(unique_texts),
+                "input_type": input_type,
+                "truncate": "NONE",
+            },
         )
-        for idx, item in enumerate(response.data):
+
+        vectors_by_key = {}
+
+        for key, item in zip(unique_keys, response.data):
             vector = item.embedding
-            i = to_call_idx[idx]
-            results[i] = vector
-            key = str(hash(to_call[idx]))
+
+            if len(vector) != EXPECTED_DIMENSIONS:
+                raise ValueError(
+                    f"Expected {EXPECTED_DIMENSIONS} dimensions, "
+                    f"received {len(vector)}"
+                )
+
+            vectors_by_key[key] = vector
             cache[key] = vector
+
         _save_cache(cache)
 
-    results_np = [np.array(r, dtype=float) for r in results]
-    return results_np
+        for i, text in enumerate(texts):
+            key = _cache_key(text, model, input_type)
+
+            if results[i] is None:
+                results[i] = vectors_by_key[key]
+
+    return [np.asarray(vector, dtype=np.float32) for vector in results]

@@ -1,5 +1,4 @@
 from flask import Blueprint, request, jsonify
-from . import db
 
 bp = Blueprint('routes', __name__)
 

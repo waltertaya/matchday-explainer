@@ -4,6 +4,7 @@ from flask_cors import CORS
 from api.config import Config
 from api import db
 from api.routes import bp
+from api.ifab_routes import ifab_bp
 
 
 def create_app():
@@ -21,6 +22,7 @@ def create_app():
     db.init_app(app)
 
     app.register_blueprint(bp, url_prefix='/api/v1')
+    app.register_blueprint(ifab_bp, url_prefix='/api/v1/ifabs')
 
     @app.errorhandler(Exception)
     def handle_error(e):

@@ -1,19 +1,32 @@
-from rag.parser import Parser
-from rag.chunker import chunk_text_by_tokens
-from rag.embedding import embed_texts
-import sys
+from flask import Flask, jsonify
+from flask_cors import CORS
+
+from api.config import Config
+from api import db
+from api.routes import bp
 
 
 if __name__ == '__main__':
-    if len(sys.argv) < 2:
-        usage = f'Usage:\n\tpython3 app.py path_to_file_to_ingest\n\tnote only file at a time'
-        print(usage)
-        exit(1)
-    
-    path = sys.argv[1]
-    parser = Parser(path)
+    app = Flask(__name__)
 
-    texts, metadata = parser.parse()
-    chunks = chunk_text_by_tokens(texts)
+    CORS(app,
+         origins='*',
+         methods=['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+         allow_headers=['Authorization', 'Content-Type', 'Accept'],
+         expose_headers=['Authorization', 'Content-Type'],
+         supports_credentials=True,
+        )
 
-    print(f'First 5 embeddings: {embed_texts(chunks)}')
+    app.config.from_object(Config)
+    db.init_app(app)
+
+    app.register_blueprint(bp, url_prefix='/api/v1')
+
+    @app.errorhandler(Exception)
+    def handle_error(e):
+        status_code = getattr(e, 'code', 500)
+        response = {'error': f'{e}'}
+        return jsonify(response), status_code
+
+
+    app.run(debug=True, host='0.0.0.0', port=8080)

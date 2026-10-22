@@ -14,11 +14,6 @@ Migrate(app, db)
 if __name__ == "__main__":
     import sys
 
-    # .venv/bin/python manage.py recreate
-    #   Drops and recreates document_chunks using the current
-    #   EMBEDDING_DIMENSIONS from rag/config.py. Run this whenever you
-    #   switch to an embedding model with a different output dimension,
-    #   then re-run POST /api/v1/rag/index.
     if len(sys.argv) > 1 and sys.argv[1] == "recreate":
         with app.app_context():
             db.session.execute(db.text("DROP TABLE IF EXISTS document_chunks"))

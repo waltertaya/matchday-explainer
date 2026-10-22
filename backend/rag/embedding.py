@@ -10,10 +10,7 @@ from openai import OpenAI
 from . import config
 
 
-client = OpenAI(
-    api_key=config.NVIDIA_OPENAI_API_KEY,
-    base_url=config.NVIDIA_BASE_URL,
-)
+client = OpenAI()
 
 EMBED_CACHE = Path(config.DATA_DIR) / "embeddings_cache.json"
 EXPECTED_DIMENSIONS = config.EMBEDDING_DIMENSIONS
@@ -48,7 +45,7 @@ def embed_texts(
     if not texts:
         return []
 
-    model = model or config.NVIDIA_EMBEDDING_MODEL
+    model = model or config.EMBEDDING_MODEL
     cache = _load_cache()
 
     results = [None] * len(texts)
@@ -82,6 +79,8 @@ def embed_texts(
 
         for key, item in zip(unique_keys, response.data):
             vector = item.embedding
+
+            # print(f"Embedding for key {key}: {vector[:5]}... (length: {len(vector)})")
 
             if len(vector) != EXPECTED_DIMENSIONS:
                 raise ValueError(

@@ -57,10 +57,7 @@ Return ONLY a single JSON object, no markdown fences, no text outside it:
 data_limits is null, or at most 30 words on what the event data lacks.
 """
 
-client = OpenAI(
-    api_key=config.NVIDIA_OPENAI_API_KEY,
-    base_url=config.NVIDIA_BASE_URL,
-)
+client = OpenAI()
 
 
 def _parse_llm_json(raw):
@@ -151,14 +148,11 @@ def search_ifabs():
         ) + OUTPUT_SCHEMA
 
         kwargs = dict(
-            model=config.NVIDIA_LLM_MODEL,
+            model=config.LLM_MODEL,
             messages=[{'role': 'user', 'content': prompt}],
             max_tokens=500,
             temperature=0.2,
         )
-        
-        if config.NVIDIA_LLM_MODEL.startswith('openai/gpt-oss'):
-            kwargs['extra_body'] = {'reasoning_effort': 'low'}
 
         completion = client.chat.completions.create(**kwargs)
         answer = _parse_llm_json(completion.choices[0].message.content)

@@ -144,7 +144,8 @@ def search_ifabs():
         )
         prompt = PROMPT_TEMPLATE.format(
             context=context_block,
-            question=query,
+            # question=query,
+            question=combined,
         ) + OUTPUT_SCHEMA
 
         kwargs = dict(

@@ -68,15 +68,15 @@ export interface LiveState extends LiveMatch {
 
 const API = "/api/v1";
 
-export async function fetchMatches(): Promise<LiveMatch[]> {
-  const res = await fetch(`${API}/matches`);
+export async function fetchMatches(signal?: AbortSignal): Promise<LiveMatch[]> {
+  const res = await fetch(`${API}/matches`, { signal });
   if (!res.ok) throw new Error(`matches: ${res.status}`);
   const body = await res.json();
   return body.matches as LiveMatch[];
 }
 
-export async function fetchMatchState(matchId: string): Promise<LiveState> {
-  const res = await fetch(`${API}/matches/${encodeURIComponent(matchId)}/state`);
+export async function fetchMatchState(matchId: string, signal?: AbortSignal): Promise<LiveState> {
+  const res = await fetch(`${API}/matches/${encodeURIComponent(matchId)}/state`, { signal });
   if (!res.ok) throw new Error(`state: ${res.status}`);
   return (await res.json()) as LiveState;
 }

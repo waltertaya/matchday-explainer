@@ -9,7 +9,14 @@ bp = Blueprint('routes', __name__)
 
 @bp.route('/health', methods=['GET'])
 def health_check():
-    return jsonify({'msg': 'The api is healthy'}), 200
+    return jsonify({'status': 'ok', 'msg': 'The api is healthy'}), 200
+
+
+@bp.get('/ready')
+def ready_check():
+    from api.readiness import readiness
+    report = readiness()
+    return jsonify(report), 200 if report['status'] == 'ready' else 503
 
 
 # ----------------------------------------------------------------------

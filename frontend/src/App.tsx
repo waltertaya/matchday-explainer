@@ -11,22 +11,31 @@ function FootballIcon() {
 }
 
 export default function App() {
-  const [route, setRoute] = useState<"matches" | "match">("matches");
-  const [matchId, setMatchId] = useState<string | null>(null);
+  const [hash, setHash] = useState(window.location.hash);
+  const routeMatch = /^#\/matches\/([^/]+)$/.exec(hash);
+  let matchId: string | null = null;
+  try { matchId = routeMatch ? decodeURIComponent(routeMatch[1]) : null; } catch { /* invalid link returns to list */ }
+  const goBack = () => { window.location.hash = "/"; };
+
+  useEffect(() => {
+    const change = () => setHash(window.location.hash);
+    window.addEventListener("hashchange", change);
+    return () => window.removeEventListener("hashchange", change);
+  }, []);
 
   useEffect(() => {
     window.scrollTo({ top: 0 });
-  }, [route, matchId]);
+  }, [matchId]);
 
   return (
     <div className="page">
       <header className="app-bar">
         <div className="app-bar__inner">
-          {route === "match" ? (
+          {matchId ? (
             <button
               type="button"
               className="back-btn"
-              onClick={() => setRoute("matches")}
+              onClick={goBack}
             >
               <svg viewBox="0 0 24 24" aria-hidden="true">
                 <path d="M15.4 4.6 14 3.2 5.2 12l8.8 8.8 1.4-1.4L8 12z" />
@@ -45,19 +54,18 @@ export default function App() {
       </header>
 
       <main className="page-main">
-        {route === "matches" && (
+        {!matchId && (
           <MatchesPage
             onOpenMatch={(id) => {
-              setMatchId(id);
-              setRoute("match");
+              window.location.hash = `/matches/${encodeURIComponent(id)}`;
             }}
           />
         )}
-        {route === "match" && matchId && (
+        {matchId && (
           <MatchPage
             key={matchId}
             matchId={matchId}
-            onBack={() => setRoute("matches")}
+            onBack={goBack}
           />
         )}
       </main>

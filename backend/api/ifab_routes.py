@@ -1,74 +1,56 @@
-from flask import Blueprint, request, jsonify
-from . import db
+"""Local-demo document endpoints. Do not expose write routes without auth."""
+from pathlib import Path
+
+from flask import Blueprint, jsonify, request, send_from_directory
+from werkzeug.utils import secure_filename
 
 from rag import config
 
-import os
-from os import listdir
-from os.path import isfile, join
+ifab_bp = Blueprint("ifab", __name__)
 
-ifab_bp = Blueprint('ifab', __name__)
 
-@ifab_bp.route('/ifabs', methods=['GET'])
+@ifab_bp.get("")
+@ifab_bp.get("/ifabs")  # compatibility with the original doubled path
 def list_ifabs_docs():
-    """List all PDF files in the IFAB directory."""
-    try:
-        files = [
-            f for f in listdir(config.IFAB_DIR)
-            if isfile(join(config.IFAB_DIR, f)) and f.lower().endswith('.pdf')
-        ]
-        return jsonify({'files': files}), 200
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+    files = sorted(path.name for path in Path(config.IFAB_DIR).glob("*.pdf") if path.is_file())
+    return jsonify(files=files)
 
-@ifab_bp.route('/ifabs/<filename>', methods=['GET'])
+
+@ifab_bp.get("/<filename>")
+@ifab_bp.get("/ifabs/<filename>")
 def get_ifab_doc(filename):
-    """Retrieve a specific PDF file from the IFAB directory."""
-    try:
-        file_path = join(config.IFAB_DIR, filename)
-        if not isfile(file_path):
-            return jsonify({'error': 'File not found'}), 404
+    if not filename.lower().endswith(".pdf"):
+        return jsonify(error="Only PDF documents are available"), 404
+    return send_from_directory(config.IFAB_DIR, filename, mimetype="application/pdf")
 
-        with open(file_path, 'rb') as f:
-            content = f.read()
 
-        return content, 200, {
-            'Content-Type': 'application/pdf',
-            'Content-Disposition': f'inline; filename="{filename}"'
-        }
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-@ifab_bp.route('/ifabs', methods=['POST'])
+@ifab_bp.post("")
+@ifab_bp.post("/ifabs")
 def upload_ifab_doc():
-    """Upload a new PDF file to the IFAB directory."""
-    try:
-        if 'file' not in request.files:
-            return jsonify({'error': 'No file part in the request'}), 400
+    file = request.files.get("file")
+    if file is None or not file.filename:
+        return jsonify(error="A PDF file is required"), 400
+    filename = secure_filename(file.filename)
+    if not filename.lower().endswith(".pdf") or file.stream.read(5) != b"%PDF-":
+        return jsonify(error="Only valid PDF uploads are allowed"), 400
+    file.stream.seek(0)
+    path = Path(config.IFAB_DIR, filename)
+    if path.exists():
+        return jsonify(error="A document with this name already exists; it was not overwritten"), 409
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("xb") as target:
+        target.write(file.read())
+    return jsonify(msg=f"{filename} uploaded. Run the indexer before using it in explanations."), 201
 
-        file = request.files['file']
-        if file.filename == '':
-            return jsonify({'error': 'No selected file'}), 400
 
-        if not file.filename.lower().endswith('.pdf'):
-            return jsonify({'error': 'Only PDF files are allowed'}), 400
-
-        file_path = join(config.IFAB_DIR, file.filename)
-        file.save(file_path)
-
-        return jsonify({'msg': f'File {file.filename} uploaded successfully'}), 201
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-@ifab_bp.route('/ifabs/<filename>', methods=['DELETE'])
+@ifab_bp.delete("/<filename>")
+@ifab_bp.delete("/ifabs/<filename>")
 def delete_ifab_doc(filename):
-    """Delete a specific PDF file from the IFAB directory."""
-    try:
-        file_path = join(config.IFAB_DIR, filename)
-        if not isfile(file_path):
-            return jsonify({'error': 'File not found'}), 404
-
-        os.remove(file_path)
-        return jsonify({'msg': f'File {filename} deleted successfully'}), 200
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+    # Flask's filename converter rejects slashes; also reject special components.
+    if Path(filename).name != filename or not filename.lower().endswith(".pdf"):
+        return jsonify(error="Document not found"), 404
+    path = Path(config.IFAB_DIR, filename)
+    if not path.is_file():
+        return jsonify(error="Document not found"), 404
+    path.unlink()
+    return jsonify(msg="PDF removed. Existing indexed passages require a separate index cleanup.")

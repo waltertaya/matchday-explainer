@@ -6,7 +6,6 @@ import {
   lawForEvent,
   whistleEvents,
   type LiveState,
-  type TimelineEvent,
 } from "../lib/live";
 
 /* Explanations are requested only after selecting an event. */
@@ -76,6 +75,7 @@ export function EventsTab({ state }: { state: LiveState }) {
                   <details className="source-passage" key={id}>
                     <summary>Passage {index + 1} · {passage?.source ?? id}</summary>
                     <p>{chunk?.content ?? "Source passage unavailable."}</p>
+                    {passage && <a className="source-document" href={`/api/v1/ifabs/${encodeURIComponent(passage.source)}`} target="_blank" rel="noreferrer">Open original IFAB document ↗</a>}
                   </details>
                 );
               })}
@@ -89,6 +89,3 @@ export function EventsTab({ state }: { state: LiveState }) {
     </div>
   );
 }
-
-// keep the TimelineEvent type referenced for consumers of this module
-export type { TimelineEvent };

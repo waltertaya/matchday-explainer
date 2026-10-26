@@ -25,6 +25,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import threading
 
 from dotenv import load_dotenv
 
@@ -34,6 +35,7 @@ from azure.eventhub import EventHubConsumerClient
 from azure.eventhub.extensions.checkpointstoreblob import BlobCheckpointStore
 
 from streaming.state import ingest_event
+from redis.exceptions import RedisError
 
 EVENTHUB_CONNECTION_STRING = os.getenv("EVENTHUB_CONNECTION_STRING")
 EVENTHUB_NAME = os.getenv("EVENTHUB_NAME", "match-events")
@@ -42,7 +44,8 @@ STORAGE_CONNECTION_STRING = os.getenv("AZURE_STORAGE_CONNECTION_STRING")
 BLOB_CONTAINER = os.getenv("BLOB_CONTAINER_NAME", "match-events-checkpoints")
 
 _checkpoint_every = 25
-_counter = {"n": 0}
+_counters = {}
+_stopping = threading.Event()
 
 
 def on_error(partition_context, error):
@@ -65,9 +68,22 @@ def on_partition_initialize(partition_context):
 
 
 def on_event(partition_context, event):
+    if event is None:
+        return
     try:
         payload = json.loads(event.body_as_str(encoding="utf-8"))
-        state = ingest_event(payload)
+        # Do not acknowledge or skip past an event while Redis is down. Each
+        # partition is processed sequentially; retrying here preserves order.
+        while not _stopping.is_set():
+            try:
+                state = ingest_event(payload)
+                break
+            except RedisError:
+                print("Redis unavailable: retaining this event and retrying in 2s. "
+                      "No checkpoint advanced.", file=sys.stderr, flush=True)
+                _stopping.wait(2)
+        else:
+            return
         if state:
             print(
                 f"[{payload.get('match_clock', {}).get('display', '?')}] "
@@ -79,13 +95,18 @@ def on_event(partition_context, event):
             )
     except Exception as exc:  # keep the consumer alive on bad records
         print(f"Failed to process event: {exc}", file=sys.stderr, flush=True)
+        return
 
-    _counter["n"] += 1
-    if _counter["n"] % _checkpoint_every == 0:
+    partition = partition_context.partition_id
+    _counters[partition] = _counters.get(partition, 0) + 1
+    full_time = payload.get("type") == "match_status" and payload.get("payload", {}).get("status") == "full_time"
+    if _counters[partition] >= _checkpoint_every or full_time:
         partition_context.update_checkpoint(event)
+        _counters[partition] = 0
 
 
 def main() -> int:
+    _stopping.clear()
     if not EVENTHUB_CONNECTION_STRING or not STORAGE_CONNECTION_STRING:
         print(
             "Missing EVENTHUB_CONNECTION_STRING / AZURE_STORAGE_CONNECTION_STRING "
@@ -122,6 +143,9 @@ def main() -> int:
         )
     except KeyboardInterrupt:
         print("Consumer stopped.", flush=True)
+    finally:
+        _stopping.set()
+        client.close()
     return 0
 
 

@@ -20,6 +20,8 @@ State missing details in data_limits. Never call a decision correct, incorrect,
 harsh, lenient or controversial. Adapt language to audience (new-fan, regular,
 analyst). Cite actual passage IDs, not invented references. Prefer the latest
 edition when available. Paraphrase; do not quote more than 14 words per passage.
+Identify trial protocols, circulars and amendments as such; do not present
+trial-specific procedures as universally adopted Laws.
 Return ONLY JSON:
 {"answerable": true, "explanation": "at most 90 words",
  "law_reference": "IFAB Laws of the Game, Law ...", "citations": ["passage id"],
@@ -64,6 +66,8 @@ def grounded_answer(query, context=None, event=None, audience="new-fan", limit=5
             and (not candidate["answerable"] or bool(citations))
         )
         if not valid:
+            # Do not make a retry replay the same malformed cached model output.
+            complete_json.cache_clear()
             raise ValueError("The generated explanation did not contain valid source citations")
         answer = {key: candidate.get(key) for key in answer}
     payload = {"query": query, "answer": answer, "passages": passages, "source": "rag"}
@@ -79,8 +83,8 @@ def grounded_answer(query, context=None, event=None, audience="new-fan", limit=5
 def index_ifabs():
     from rag.indexing import Indexer
     try:
-        Indexer().save()
-        return jsonify(msg="Indexing completed successfully"), 200
+        report = Indexer().save()
+        return jsonify(msg="Indexing completed successfully", report=report), 200
     except Exception:
         log.exception("IFAB indexing failed")
         return jsonify(error="IFAB indexing failed. Check the database and AI configuration."), 503

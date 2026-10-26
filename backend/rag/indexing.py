@@ -2,7 +2,7 @@
 from os import listdir
 from os.path import isfile, join
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from api import db
 from api.models import DocumentChunks
@@ -19,8 +19,9 @@ class Indexer:
 
     def save(self):
         """Parse PDFs, generate embeddings, and save chunks to PostgreSQL."""
+        report = {"indexed": 0, "unchanged": 0, "chunks": 0}
         try:
-            for filename in listdir(self.ifab_dir):
+            for filename in sorted(listdir(self.ifab_dir)):
                 path = join(self.ifab_dir, filename)
 
                 if not isfile(path) or not filename.lower().endswith(".pdf"):
@@ -34,6 +35,17 @@ class Indexer:
                 if not chunks:
                     continue
 
+                # Re-indexing an unchanged file must not duplicate evidence or
+                # pay for another embedding call. Changed sources are replaced
+                # atomically in the same transaction, never appended blindly.
+                source = metadata["source"]
+                existing = db.session.execute(select(DocumentChunks.content).where(
+                    DocumentChunks.source == source,
+                )).scalars().all()
+                if len(existing) == len(chunks) and sorted(existing) == sorted(chunks):
+                    report["unchanged"] += 1
+                    continue
+
                 # generate document embeddings.
                 embeddings = embed_texts(
                     chunks,
@@ -45,12 +57,11 @@ class Indexer:
                         f"Chunk/embedding count mismatch: {filename}"
                     )
 
-                for chunk, embedding in zip(chunks, embeddings):
-                    if len(embedding) != config.EMBEDDING_DIMENSIONS:
-                        raise ValueError(
-                            f"Expected {config.EMBEDDING_DIMENSIONS} dimensions, got {len(embedding)}"
-                        )
+                if any(len(vector) != config.EMBEDDING_DIMENSIONS for vector in embeddings):
+                    raise ValueError("Embedding dimensions do not match the configured index")
+                db.session.execute(delete(DocumentChunks).where(DocumentChunks.source == source))
 
+                for chunk, embedding in zip(chunks, embeddings):
                     document_chunk = DocumentChunks(
                         content=chunk,
                         source=metadata["source"],
@@ -59,7 +70,11 @@ class Indexer:
 
                     db.session.add(document_chunk)
 
+                report["indexed"] += 1
+                report["chunks"] += len(chunks)
+
             db.session.commit()
+            return report
 
         except Exception:
             db.session.rollback()

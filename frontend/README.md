@@ -1,48 +1,62 @@
-# Matchday Explainer — frontend
+# Matchday Explainer frontend
 
-React + TypeScript (Vite) front end for Matchday Explainer.
+React 19, TypeScript and Vite. The UI uses the **real Flask API**, not dummy
+fixture bundles. See the root [README](../README.md) for full setup.
 
-All data is **dummy** and lives in `src/data/` with types in `src/types.ts`,
-shaped to mirror the future match-state/event APIs, so connecting the
-backend later means replacing the functions in `src/data/bundles.ts`
-(`matchCards`, `getBundle`) with API calls — components don't need to change.
+## Development
 
-## Screens
-
-1. **Live matches** (`src/pages/MatchesPage.tsx`) — the entry list. Live
-   fixtures (score, minute, pulse) open a match screen on click; scheduled
-   fixtures are listed under "Starting soon".
-2. **Match screens** (`src/pages/MatchPage.tsx`) — three tabs:
-   - **Catch me up** — plain-language summary with *Since kick-off / Last 10
-     min / Since I joined* windows, a time scrubber (Goal/Stoppage markers) and
-     the claims-verified grounding badge.
-   - **Stats** — tappable stat rows; a sheet explains "What it is" per audience
-     (New fan / Regular / Analyst) plus "In this match".
-   - **Why that whistle?** — match events; a sheet explains the law behind each
-     decision with the IFAB source and a "rule, not a verdict" disclaimer.
-
-## Dev
-
-```bash
-npm install
-npm run dev      # http://localhost:5173
-npm run build    # type-check + production build
+```sh
+npm ci
+npm run dev
+npm run build
 npm run lint
 ```
 
-## Layout notes
+Use Node 24. Vite serves port 5173 and proxies `/api` to Flask on 8080. Start
+the backend separately. The preview server is a static build preview; a real
+deployment must forward `/api` to the backend as well.
 
-Design tokens (colors, spacing, shadows) come from the product mock-ups and
-live in `src/index.css` under `:root`. Mobile-first: the match panel is a
-single-centered column; cards and sheets widen at `620px / 720px / 980px`
-breakpoints; explainer sheets are bottom slides on mobile and centered
-dialogs on desktop.
+## Screens and behavior
 
-## Connecting a backend later
+- **Match list:** refreshes every four seconds without overlapping requests.
+  Search teams/competitions; filter all matches, live matches or saved files.
+  Saved files are explicitly labelled and do not prove streaming is working.
+- **Pipeline details:** checks local Redis, IFAB index availability and AI-key
+  configuration every 30 seconds. AI model access and Azure consumption are
+  not probed. Service failures do not prevent browsing available match data.
+- **Match links:** `/#/matches/<match_id>` survives refresh and can be shared.
+  Browser back/forward works. The generator prints a link for each live demo.
+- **Catch me up:** backend-generated summary windows and a time scrubber. AI
+  selects evidence IDs; source text and values are rendered by the backend.
+  Supporting data can be expanded below the fact badge. Requests refresh at 30-second samples
+  so accelerated SSE updates do not continually cancel an AI request.
+- **Stats:** nine rows, all driven by match state. Clicking a row opens an AI
+  definition for New fan / Regular / Analyst, with live values shown separately.
+- **Why that whistle?:** nothing opens or requests a law explanation until a
+  row is selected. Retrieved passages, data limits and original PDF links are
+  exposed. Unavailable or unsupported answers show clear retry/abstention UI.
 
-- `src/data/matchData.ts` — replace the raw fixture specs with API responses.
-- `src/data/bundles.ts` — swap the synchronous getters for `fetch` calls
-  (consider a tiny React Query layer or context provider).
-- `src/lib/summary.ts` — replace the canned summary generator with the
-  summary service output (keep the `MatchSummary` shape).
-- `vite.config.ts` — add a `server.proxy` entry for the backend when ready.
+An open match receives full snapshots over SSE, checked by the backend once
+per second. EventSource reconnects automatically. Source-data and glossary
+fallbacks are labelled; they are not misrepresented as AI/RAG output.
+
+## Code map
+
+| Path | Responsibility |
+| --- | --- |
+| `src/App.tsx` | Hash routing and app shell |
+| `src/lib/live.ts` | API state types, fetching, SSE and live value formatting |
+| `src/lib/explanations.ts` | Typed explanation responses, cancellation, debounce, retry and bounded client cache |
+| `src/pages/` | Match discovery and match subscriptions |
+| `src/components/` | Summary, stats, events, readiness, scrubber and accessible sheets |
+| `src/data/explanations.ts` | UI titles and audience labels only; no canned law answers |
+| `src/index.css` | Design tokens and responsive styles |
+
+Requests are aborted on unmount; obsolete explanation results are hidden.
+Dialogs support Escape, Tab focus containment, close buttons and focus return.
+Styles respect reduced-motion preferences. The mobile sheet becomes a centred
+dialog on desktop; colors and spacing follow `presentations/03-product-screens.png`.
+
+Build and lint run in GitHub Actions. Backend tests cover API contracts and
+failure behavior. Browser interaction checks are manual; there is currently
+no committed browser end-to-end test suite.

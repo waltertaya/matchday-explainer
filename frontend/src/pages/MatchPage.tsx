@@ -22,12 +22,14 @@ export function MatchPage({
   const [tab, setTab] = useState<MatchTab>("catch-up");
   const [joinedAt, setJoinedAt] = useState<number | null>(null);
   const [connected, setConnected] = useState(true);
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     let alive = true;
     let unsubscribe: (() => void) | undefined;
+    const controller = new AbortController();
 
-    fetchMatchState(matchId)
+    fetchMatchState(matchId, controller.signal)
       .then((initial) => {
         if (!alive) return;
         setError(null);
@@ -48,26 +50,28 @@ export function MatchPage({
 
     return () => {
       alive = false;
+      controller.abort();
       unsubscribe?.();
     };
-  }, [matchId]);
+  }, [matchId, attempt]);
 
   if (error) {
     return (
       <>
         <p className="hero__tagline">
-          No live state for this match ({error}). It may not have streamed
-          through the pipeline yet.
+          This match is not available yet ({error}). If a live replay just
+          started, wait for its first event and try again.
         </p>
         <button className="back-btn" onClick={onBack}>
-          All live matches
+          All matches
         </button>
+        <button className="retry-btn" onClick={() => { setError(null); setAttempt((value) => value + 1); }}>Try again</button>
       </>
     );
   }
 
   if (!state) {
-    return <p className="hero__tagline">Loading live match…</p>;
+    return <p className="hero__tagline" role="status">Loading match…</p>;
   }
 
   return (

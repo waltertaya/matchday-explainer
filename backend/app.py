@@ -1,5 +1,6 @@
 from flask import Flask, jsonify
 from flask_cors import CORS
+import os
 
 from api.config import Config
 from api import db
@@ -13,15 +14,15 @@ from api.match_stats_routes import match_stats_bp
 def create_app():
     app = Flask(__name__)
 
-    CORS(app,
-         origins='*',
-         methods=['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-         allow_headers=['Authorization', 'Content-Type', 'Accept'],
-         expose_headers=['Authorization', 'Content-Type'],
-         supports_credentials=True,
-        )
+    CORS(app, resources={r'/api/*': {
+        'origins': os.getenv('CORS_ORIGINS', 'http://localhost:5173,http://127.0.0.1:5173').split(','),
+    }})
 
     app.config.from_object(Config)
+    if app.config['SQLALCHEMY_DATABASE_URI'].startswith('postgresql'):
+        app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+            **app.config['SQLALCHEMY_ENGINE_OPTIONS'], 'connect_args': {'connect_timeout': 3},
+        }
     db.init_app(app)
 
     app.register_blueprint(bp, url_prefix='/api/v1')
@@ -33,7 +34,9 @@ def create_app():
     @app.errorhandler(Exception)
     def handle_error(e):
         status_code = getattr(e, 'code', 500)
-        response = {'error': f'{e}'}
+        if status_code >= 500:
+            app.logger.exception('Unhandled API error')
+        response = {'error': getattr(e, 'description', 'The request failed. Check backend logs for details.')}
         return jsonify(response), status_code
 
     return app

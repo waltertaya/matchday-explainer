@@ -1,6 +1,11 @@
 
 import hashlib
 import json
+import logging
+import os
+import tempfile
+from functools import lru_cache
+from threading import RLock
 from pathlib import Path
 from typing import List, Optional
 
@@ -10,22 +15,53 @@ from openai import OpenAI
 from . import config
 
 
-EMBED_CACHE = Path(config.DATA_DIR) / "embeddings_cache.json"
+SEED_CACHE = Path(config.DATA_DIR) / "embeddings_cache.json"
+EMBED_CACHE = Path(config.DATA_DIR) / "embeddings_cache.local.json"
 EXPECTED_DIMENSIONS = config.EMBEDDING_DIMENSIONS
+_cache_lock = RLock()
+
+
+@lru_cache(maxsize=4)
+def _read_cache(filename, mtime, size):
+    try:
+        data = json.loads(Path(filename).read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        logging.getLogger(__name__).warning("Ignoring unreadable embedding cache %s", filename)
+        return {}
+
+
+def _cache_file(path):
+    try:
+        stat = path.stat()
+        return _read_cache(str(path), stat.st_mtime_ns, stat.st_size)
+    except OSError:
+        return {}
 
 
 def _load_cache():
-    if EMBED_CACHE.exists():
-        return json.loads(EMBED_CACHE.read_text(encoding="utf-8"))
-    return {}
+    with _cache_lock:
+        return {**_cache_file(SEED_CACHE), **_cache_file(EMBED_CACHE)}
 
 
 def _save_cache(cache: dict):
-    EMBED_CACHE.parent.mkdir(parents=True, exist_ok=True)
-    EMBED_CACHE.write_text(
-        json.dumps(cache),
-        encoding="utf-8",
-    )
+    # Seed vectors are read-only. Write only additions to a gitignored file;
+    # atomic replacement prevents a concurrent request reading half a JSON file.
+    with _cache_lock:
+        EMBED_CACHE.parent.mkdir(parents=True, exist_ok=True)
+        seed = _cache_file(SEED_CACHE)
+        additions = {key: value for key, value in cache.items() if seed.get(key) != value}
+        local = {**_cache_file(EMBED_CACHE), **additions}
+        temporary = None
+        try:
+            with tempfile.NamedTemporaryFile(mode="w", dir=EMBED_CACHE.parent,
+                                             prefix=".embedding-", delete=False) as stream:
+                temporary = stream.name
+                json.dump(local, stream)
+            os.replace(temporary, EMBED_CACHE)
+        finally:
+            if temporary and os.path.exists(temporary):
+                os.unlink(temporary)
 
 
 def _cache_key(text: str, model: str, input_type: str) -> str:
@@ -52,7 +88,7 @@ def embed_texts(
     for i, text in enumerate(texts):
         key = _cache_key(text, model, input_type)
 
-        if key in cache:
+        if isinstance(cache.get(key), list) and len(cache[key]) == EXPECTED_DIMENSIONS:
             results[i] = cache[key]
         else:
             # Deduplicate repeated text within this request.
@@ -63,23 +99,17 @@ def embed_texts(
         unique_texts = list(missing.values())
 
         client = OpenAI(timeout=20, max_retries=0)
-        response = client.embeddings.create(
-            input=unique_texts,
-            model=model,
-            encoding_format="float",
-            extra_body={
-                "modality": ["text"] * len(unique_texts),
-                "input_type": input_type,
-                "truncate": "NONE",
-            },
-        )
+        options = {"input": unique_texts, "model": model, "encoding_format": "float"}
+        if model.startswith("text-embedding-3"):
+            options["dimensions"] = EXPECTED_DIMENSIONS
+        response = client.embeddings.create(**options)
+        if len(response.data) != len(unique_keys):
+            raise ValueError("Embedding service returned an unexpected number of vectors")
 
         vectors_by_key = {}
 
         for key, item in zip(unique_keys, response.data):
             vector = item.embedding
-
-            # print(f"Embedding for key {key}: {vector[:5]}... (length: {len(vector)})")
 
             if len(vector) != EXPECTED_DIMENSIONS:
                 raise ValueError(

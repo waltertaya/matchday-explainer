@@ -37,10 +37,14 @@ def _project_file(filename, mtime, size):
     return states
 
 
-def saved_states():
-    directory = Path(os.getenv(
+def match_data_dir():
+    return Path(os.getenv(
         "MATCH_DATA_DIR", str(Path(__file__).resolve().parents[1] / "data" / "synth"),
     ))
+
+
+def saved_states():
+    directory = match_data_dir()
     states = {}
     for path in sorted(directory.glob("*.jsonl")):
         try:

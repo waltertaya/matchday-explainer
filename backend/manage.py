@@ -1,25 +1,29 @@
-from flask_migrate import Migrate
+"""Explicit, non-destructive database setup: python manage.py init-db."""
+import argparse
 
-from app import create_app
+from sqlalchemy import text
+
 from api import db
+from app import create_app
 
-app = create_app()
 
-with app.app_context():
-    from api.models import DocumentChunks
-    db.create_all()
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("command", choices=["init-db"])
+    parser.parse_args(argv)
+    app = create_app()
+    with app.app_context():
+        if db.engine.dialect.name != "postgresql":
+            parser.error("IFAB indexing requires PostgreSQL with pgvector. Set DB_URI first.")
+        # Requires a DB user allowed to enable an installed pgvector extension.
+        # No tables or data are dropped, and nothing runs merely on import.
+        db.session.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+        db.session.commit()
+        from api.models import DocumentChunks  # register model before create_all
+        db.create_all()
+        print(f"Database ready: {DocumentChunks.__tablename__}. Existing data preserved.")
+    return 0
 
-Migrate(app, db)
 
 if __name__ == "__main__":
-    import sys
-
-    if len(sys.argv) > 1 and sys.argv[1] == "recreate":
-        with app.app_context():
-            db.session.execute(db.text("DROP TABLE IF EXISTS document_chunks"))
-            db.create_all()
-            db.session.commit()
-        from rag.config import EMBEDDING_DIMENSIONS
-        print(f"document_chunks recreated with vector({EMBEDDING_DIMENSIONS})")
-    else:
-        app.run(port=8080, debug=True)
+    raise SystemExit(main())

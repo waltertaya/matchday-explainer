@@ -39,11 +39,18 @@ from __future__ import annotations
 import argparse
 import json
 import random
+import secrets
 import sys
 from uuid import uuid4
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+from dotenv import load_dotenv
+
+# Read settings before importing the catalogue/Redis projection in main.
+# Otherwise --to-redis silently uses localhost even when .env sets another URL.
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 SCHEMA_VERSION = "1.0"
 
@@ -94,8 +101,8 @@ class MatchSimulator:
     """Simulates one full 90-minute match as an append-only event stream."""
 
     def __init__(self, seed: Optional[int] = None):
-        self.rng = random.Random(seed)
-        self.seed = seed if seed is not None else self.rng.randrange(2**31)
+        self.seed = seed if seed is not None else secrets.randbits(31)
+        self.rng = random.Random(self.seed)
 
         home, away = self.rng.sample(TEAMS, 2)
         self.home = {"name": home[0], "short": home[1]}
@@ -120,6 +127,7 @@ class MatchSimulator:
         # Rolling state — the "match state" projection.
         self.seq = 0
         self.elapsed_seconds = 0.0          # match clock for recorded_at
+        self.second_half_offset = 0.0
         self.score = {"home": 0, "away": 0}
         self.stats = {
             "possession": {"home": 50, "away": 50},
@@ -195,7 +203,10 @@ class MatchSimulator:
         half: str,
     ) -> None:
         self.seq += 1
-        self.elapsed_seconds += self.rng.uniform(8, 45)  # pace the replay
+        elapsed = minute * 60 + second
+        if half == "SECOND_HALF":
+            elapsed += self.second_half_offset
+        self.elapsed_seconds = max(self.elapsed_seconds, elapsed)
         clock = self._clock(minute, second, half)
         self.lines.append({
             "schema_version": SCHEMA_VERSION,
@@ -430,7 +441,7 @@ class MatchSimulator:
         rng = self.rng
 
         self._emit_status(
-            "kickoff", 1, 0, "FIRST_HALF",
+            "kickoff", 0, 0, "FIRST_HALF",
             {
                 "competition": self.competition,
                 "venue": self.venue,
@@ -453,6 +464,9 @@ class MatchSimulator:
             ("FIRST_HALF", 1, 45, stoppage_first),
             ("SECOND_HALF", 46, 90, stoppage_second),
         ):
+            if half == "SECOND_HALF":
+                self.second_half_offset = max(0, self.elapsed_seconds - 45 * 60)
+                self._emit_status("second_half_kickoff", 45, 0, "SECOND_HALF")
             minutes = list(range(start, end + 1)) + [
                 end + i for i in range(1, stoppage + 1)
             ]
@@ -559,27 +573,31 @@ def build_match(seed: Optional[int] = None) -> MatchSimulator:
     return sim
 
 
-def send_to_event_hubs(lines: List[Dict[str, Any]], speed: float = 30.0) -> None:
+def send_to_event_hubs(lines: List[Dict[str, Any]], speed=1.0) -> None:
     """Use the same paced publisher as streaming.replay (also loads .env)."""
     from streaming.replay import send_to_eventhub
     send_to_eventhub(lines, speed)
 
 
 def main(argv: Optional[List[str]] = None) -> int:
-    from streaming.replay import replay_speed
+    from streaming.pacing import ReplayTiming, add_timing_arguments
 
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--seed", type=int, default=None,
                         help="RNG seed; omit for a different match every run")
     parser.add_argument("--out", default=None, help="output .jsonl path")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="preview the fixture and timing without writing files or publishing")
     destination = parser.add_mutually_exclusive_group()
     destination.add_argument("--stream", action="store_true",
                              help="generate and immediately replay to Azure Event Hubs")
     destination.add_argument("--to-redis", action="store_true",
                              help="generate and immediately replay to local Redis (no consumer needed)")
-    parser.add_argument("--speed", type=replay_speed, default=30.0,
-                        help="stream/replay speed multiplier (default: 30; 0 = no pacing)")
+    add_timing_arguments(parser)
     args = parser.parse_args(argv)
+    streaming = args.stream or args.to_redis
+    if not streaming and not args.dry_run and any(value is not None for value in (args.speed, args.duration, args.event_interval)):
+        parser.error("Timing options require --stream or --to-redis; otherwise only a file is saved")
 
     sim = build_match(seed=args.seed)
     problems = sim.validate()
@@ -588,33 +606,58 @@ def main(argv: Optional[List[str]] = None) -> int:
     if problems:
         return 1
 
-    out = Path(args.out) if args.out else Path(
-        "data/synth/{}.jsonl".format(sim.match_id),
-    )
+    if args.dry_run:
+        print(f"Fixture: {sim.home['name']} vs {sim.away['name']}; seed {sim.seed}; {len(sim.lines)} events")
+        print(ReplayTiming.from_args(args).describe(sim.lines))
+        print("Dry run: no files written, events published or state changed.")
+        return 0
+
+    from streaming.catalog import match_data_dir
+    out = Path(args.out) if args.out else match_data_dir() / f"{sim.match_id}.jsonl"
     out.parent.mkdir(parents=True, exist_ok=True)
-    with out.open("w", encoding="utf-8") as fh:
+    if out.exists():
+        parser.error(f"Output already exists: {out}. Choose a new --out path; existing matches are never overwritten.")
+    # Keep full-time facts out of the API's archive catalogue during a live
+    # replay. Redis is the only source of progress until publication finishes.
+    archive = out.with_suffix(out.suffix + ".pending") if streaming else out
+    with archive.open("x", encoding="utf-8") as fh:
         for line in sim.lines:
             fh.write(json.dumps(line, separators=(",", ":")) + "\n")
 
     ft = sim.lines[-1]["payload"]
     print(f"match_id : {sim.match_id}")
-    print(f"file     : {out}")
+    print(f"seed     : {sim.seed}")
+    print(f"fixture  : {sim.home['name']} vs {sim.away['name']}")
+    print(f"file     : {archive}")
     print(f"events   : {len(sim.lines)} lines")
-    print(f"score    : {sim.home['name']} {ft['score']} {sim.away['name']}")
-    print(f"xG       : {sim.stats['xg']['home']:.2f} - "
-          f"{sim.stats['xg']['away']:.2f}")
+    if not streaming:
+        print(f"score    : {sim.home['name']} {ft['score']} {sim.away['name']}")
+        print(f"xG       : {sim.stats['xg']['home']:.2f} - {sim.stats['xg']['away']:.2f}")
     print("validation: OK (stats are a consistent projection of the events)")
 
-    if args.stream:
-        send_to_event_hubs(sim.lines, args.speed)
-    elif args.to_redis:
-        from streaming.replay import send_to_redis
-        send_to_redis(sim.lines, args.speed)
+    if streaming:
+        print(f"Open match: http://localhost:5173/#/matches/{sim.match_id}", flush=True)
+        timing = ReplayTiming.from_args(args)
+        try:
+            if args.stream:
+                send_to_event_hubs(sim.lines, timing)
+            else:
+                from streaming.replay import send_to_redis
+                send_to_redis(sim.lines, timing)
+        except KeyboardInterrupt:
+            print(f"\nReplay stopped. Recovery file preserved: {archive}")
+            return 130
+        except Exception as error:
+            print(f"Replay failed ({type(error).__name__}). Recovery file: {archive}. "
+                  "Check service connectivity and configuration.", file=sys.stderr)
+            return 1
+        archive.replace(out)
+        print(f"Archive saved: {out}")
     else:
         print("Saved only — no live events published. To generate AND stream, use:\n"
-              "  python -m synth.generator --stream --speed 30\n"
+              "  python -m synth.generator --stream --duration 600\n"
               "Or without Azure:\n"
-              "  python -m synth.generator --to-redis --speed 30")
+              "  python -m synth.generator --to-redis --event-interval 5")
     return 0
 
 

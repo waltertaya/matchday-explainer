@@ -1,5 +1,3 @@
-from docx import Document as DocxDocument
-from pptx import Presentation
 import pdfplumber
 import os
 
@@ -28,6 +26,7 @@ class Parser:
 
     def parse_docx(self) -> str:
         ''' extract text from word document '''
+        from docx import Document as DocxDocument
         doc = DocxDocument(self.path)
         paragraphs = []
 
@@ -39,6 +38,7 @@ class Parser:
 
     def parse_pptx(self) -> str:
         ''' extract text from pptx files '''
+        from pptx import Presentation
         prs = Presentation(self.path)
         text = []
 

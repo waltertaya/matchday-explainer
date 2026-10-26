@@ -14,6 +14,8 @@ from app import create_app
 from streaming import catalog
 from streaming.state import apply_event, new_state
 
+TEMP_ROOT = "/tmp/opencode" if Path("/tmp/opencode").is_dir() else None
+
 
 def fixture():
     state = new_state("test-match")
@@ -66,7 +68,7 @@ class SummaryFactsTests(unittest.TestCase):
 
 class CatalogTests(unittest.TestCase):
     def setUp(self):
-        self.directory = tempfile.TemporaryDirectory(dir="/tmp/opencode")
+        self.directory = tempfile.TemporaryDirectory(dir=TEMP_ROOT)
         self.env = patch.dict(os.environ, {"MATCH_DATA_DIR": self.directory.name})
         self.env.start()
         event = {
@@ -89,7 +91,8 @@ class CatalogTests(unittest.TestCase):
 
     @patch("streaming.catalog.mstate.load_state", side_effect=ConnectionError)
     def test_saved_match_available_when_redis_is_down(self, _):
-        self.assertEqual(catalog.get_state("saved")["home"]["name"], "Home")
+        with self.assertLogs("streaming.catalog", level="WARNING"):
+            self.assertEqual(catalog.get_state("saved")["home"]["name"], "Home")
 
     def test_redis_wins_without_duplicates(self):
         live = {"match_id": "saved", "status": "half_time", "updated_at": "2026"}
@@ -101,7 +104,8 @@ class CatalogTests(unittest.TestCase):
 
     def test_bad_file_does_not_hide_good_matches(self):
         Path(self.directory.name, "broken.jsonl").write_text("{not json}")
-        self.assertIn("saved", catalog.saved_states())
+        with self.assertLogs("streaming.catalog", level="WARNING"):
+            self.assertIn("saved", catalog.saved_states())
 
     def test_projection_does_not_change_ingestion_state(self):
         projected = catalog.saved_states()["saved"]
@@ -139,7 +143,8 @@ class ApiTests(unittest.TestCase):
 
     @patch("api.match_summary_routes.complete_json", return_value={"fact_ids": ["score", "invented"]})
     def test_unsupported_ai_claim_falls_back_to_evidence(self, _):
-        body = self.client.post("/api/v1/matches/test-match/summary", json={}).get_json()
+        with self.assertLogs("api.match_summary_routes", level="WARNING"):
+            body = self.client.post("/api/v1/matches/test-match/summary", json={}).get_json()
         self.assertEqual(body["source"], "event-stream")
         self.assertNotIn("invented", str(body["paragraphs"]))
         self.assertIsNotNone(body["notice"])
@@ -159,7 +164,8 @@ class ApiTests(unittest.TestCase):
 
     @patch("api.match_stats_routes.complete_json", side_effect=RuntimeError("offline"))
     def test_stat_fallback_is_explicit(self, _):
-        body = self.client.post("/api/v1/matches/test-match/stats/xg/explanation", json={}).get_json()
+        with self.assertLogs("api.match_stats_routes", level="WARNING"):
+            body = self.client.post("/api/v1/matches/test-match/stats/xg/explanation", json={}).get_json()
         self.assertEqual(body["source"], "glossary")
         self.assertIsNotNone(body["notice"])
 
@@ -195,7 +201,8 @@ class ApiTests(unittest.TestCase):
         "answerable": True, "explanation": "Unsupported", "citations": ["fake"],
     })
     def test_invented_rag_citation_is_not_shown(self, model, _):
-        response = self.client.post("/api/v1/rag/matches/test-match/events/3/explanation", json={})
+        with self.assertLogs("api.rag_routes", level="ERROR"):
+            response = self.client.post("/api/v1/rag/matches/test-match/events/3/explanation", json={})
         self.assertEqual(response.status_code, 503)
         self.assertNotIn("Unsupported", response.get_data(as_text=True))
 

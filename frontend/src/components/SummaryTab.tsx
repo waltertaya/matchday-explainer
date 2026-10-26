@@ -91,7 +91,7 @@ export function SummaryTab({
               <path d="M9.6 16.6 4.8 11.8l1.4-1.4 3.4 3.4 8-8 1.4 1.4z" />
             </svg>
           </span>
-          {summary.claims.verified} of {summary.claims.total} claims verified
+          {summary.claims.verified} of {summary.claims.total} facts linked to match data
         </div>
       )}
       {summary && <details className="source-passage summary-evidence">

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { TimelineScrubber } from "./TimelineScrubber";
-import { buildSummary, timelineMarkers } from "../lib/summary";
-import type { MatchBundle, MatchDetail, SummaryWindow } from "../types";
+import { buildSummary, type SummaryWindow } from "../lib/summary";
+import { timelineMarkers, type LiveState } from "../lib/live";
 
 const WINDOWS: Array<{ id: SummaryWindow; label: string }> = [
   { id: "since-kickoff", label: "Since kick-off" },
@@ -11,19 +11,21 @@ const WINDOWS: Array<{ id: SummaryWindow; label: string }> = [
 
 /* "Catch me up" screen: window chips, plain-language story,
    a time scrubber with Goal/Stoppage markers, and the
-   grounding badge (claims verified against the event stream). */
+   grounding badge — all driven by the live event timeline. */
 export function SummaryTab({
-  bundle,
-  detail,
+  state,
+  joinedAt,
 }: {
-  bundle: MatchBundle;
-  detail: MatchDetail;
+  state: LiveState;
+  joinedAt: number;
 }) {
   const [win, setWin] = useState<SummaryWindow>("since-kickoff");
-  const [minute, setMinute] = useState(bundle.match.minute);
+  // null = follow the live clock; a number = the user has scrubbed
+  const [scrubbed, setScrubbed] = useState<number | null>(null);
+  const minute = scrubbed ?? state.minute;
 
-  const summary = buildSummary(bundle, detail, minute, win);
-  const markers = timelineMarkers(detail);
+  const summary = buildSummary(state, minute, win, joinedAt);
+  const markers = timelineMarkers(state);
 
   return (
     <div className="panel">
@@ -50,13 +52,13 @@ export function SummaryTab({
         </div>
       </article>
 
-      {markers.length > 0 && (
+      {markers.length > 0 && state.minute > 0 && (
         <TimelineScrubber
           min={0}
-          max={bundle.match.minute}
+          max={state.minute}
           value={minute}
           markers={markers}
-          onChange={setMinute}
+          onChange={setScrubbed}
         />
       )}
 
@@ -69,6 +71,12 @@ export function SummaryTab({
           </span>
           {summary.claims.verified} of {summary.claims.total} claims verified
         </div>
+      )}
+
+      {state.timeline.length === 0 && (
+        <p className="page-note">
+          Waiting for the first events of this match…
+        </p>
       )}
     </div>
   );

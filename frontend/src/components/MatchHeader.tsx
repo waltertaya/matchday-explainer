@@ -1,18 +1,28 @@
-import type { Match } from "../types";
+import type { LiveState } from "../lib/live";
+import { statusLabel } from "../lib/live";
 
-/** Dark green scoreboard header from the product screens. */
-export function MatchHeader({ match }: { match: Match }) {
+/** Dark green scoreboard header from the product screens, now live. */
+export function MatchHeader({ state }: { state: LiveState }) {
+  const badge =
+    state.status === "full_time"
+      ? "FT"
+      : state.status === "half_time"
+        ? "HT"
+        : statusLabel(state.status) === "LIVE"
+          ? state.display
+          : state.display;
+
   return (
     <section className="match-header" aria-label="Match score">
       <div className="match-header__names">
-        <span>{match.home.name}</span>
-        <span>{match.away.name}</span>
+        <span>{state.home?.name}</span>
+        <span>{state.away?.name}</span>
       </div>
       <div className="match-header__score">
         <span className="score" aria-live="polite">
-          {match.homeScore} – {match.awayScore}
+          {state.score.home} – {state.score.away}
         </span>
-        <span className="minute">{match.minute}'</span>
+        <span className="minute">{badge}</span>
       </div>
     </section>
   );

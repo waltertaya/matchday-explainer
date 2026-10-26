@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useRef } from "react";
-import type { TimelineMarker } from "../types";
+
+export interface TimelineMarker {
+  minute: number;
+  kind: "goal" | "stoppage";
+}
 
 interface Props {
   min: number;

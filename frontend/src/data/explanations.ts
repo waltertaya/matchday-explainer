@@ -1,6 +1,5 @@
 import type {
   Audience,
-  EventType,
   LawDetail,
   StatExplanation,
 } from "../types";
@@ -66,8 +65,10 @@ export const statExplanations: StatExplanation[] = [
  * Referee explanations ("Why that whistle?"), per event type.
  * Sourced from the IFAB Laws of the Game — this is where Referee RAG
  * (Azure AI Search over the Laws) would return the law behind each call.
+ * Keyed by the live timeline's event_type vocabulary (plus "red-card",
+ * which shares Law 12 with fouls and cautions).
  */
-export const lawDetails: Record<EventType, LawDetail> = {
+export const lawDetails: Record<string, LawDetail> = {
   goal: {
     title: "Was that a good goal?",
     body: "A goal is awarded when the whole of the ball crosses the whole of the goal line, between the posts and under the crossbar, provided no offence was committed in the build-up.",

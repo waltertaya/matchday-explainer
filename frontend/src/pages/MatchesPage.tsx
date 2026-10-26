@@ -1,7 +1,12 @@
-import { matchCards } from "../data/bundles";
+import { useEffect, useState } from "react";
+import {
+  fetchMatches,
+  statusLabel,
+  type LiveMatch,
+} from "../lib/live";
 
 function initials(name: string) {
-  return name
+  return (name ?? "")
     .split(/\s+/)
     .map((w) => w[0])
     .join("")
@@ -14,8 +19,35 @@ export function MatchesPage({
 }: {
   onOpenMatch: (id: string) => void;
 }) {
-  const live = matchCards.filter((c) => c.match.status === "live");
-  const upcoming = matchCards.filter((c) => c.match.status === "scheduled");
+  const [matches, setMatches] = useState<LiveMatch[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    const load = () => {
+      fetchMatches()
+        .then((m) => {
+          if (alive) {
+            setMatches(m);
+            setError(null);
+          }
+        })
+        .catch((e) => {
+          if (alive) setError(String(e.message ?? e));
+        });
+    };
+    load();
+    const timer = setInterval(load, 4000); // live list refresh
+    return () => {
+      alive = false;
+      clearInterval(timer);
+    };
+  }, []);
+
+  const live = (matches ?? []).filter(
+    (m) => m.status === "live" || m.status === "half_time",
+  );
+  const finished = (matches ?? []).filter((m) => m.status === "full_time");
 
   return (
     <>
@@ -23,9 +55,22 @@ export function MatchesPage({
         <h1 className="hero__title">Live matches</h1>
         <p className="hero__tagline">
           Tap a match for plain-language summaries, stat explainers and the law
-          behind every whistle.
+          behind every whistle — updated live from the event stream.
         </p>
       </header>
+
+      {error && (
+        <p className="page-note">
+          Can't reach the match state API ({error}). Is the backend running?
+        </p>
+      )}
+
+      {!error && matches !== null && matches.length === 0 && (
+        <p className="page-note">
+          No live matches yet. Stream events into the pipeline and the cards
+          will appear here automatically.
+        </p>
+      )}
 
       {live.length > 0 && (
         <section aria-labelledby="live-heading">
@@ -34,76 +79,79 @@ export function MatchesPage({
             <span className="count">{live.length}</span>
           </div>
           <div className="match-grid">
-            {live.map(({ match }) => (
-              <button
-                key={match.id}
-                type="button"
-                className="match-card"
-                onClick={() => onOpenMatch(match.id)}
-              >
-                <div className="match-card__top">
-                  <span className="match-card__comp">
-                    {match.competition}
-                  </span>
-                  <span className="live-pill">
-                    <span className="live-dot" aria-hidden="true" />
-                    LIVE
-                  </span>
-                </div>
-
-                <div className="match-card__teams">
-                  <div className="team-line">
-                    <span className="crest crest--home" aria-hidden="true">
-                      {initials(match.home.name)}
-                    </span>
-                    <span className="team-line__name">{match.home.name}</span>
-                    <span className="team-line__score">
-                      {match.homeScore}
-                    </span>
-                  </div>
-                  <div className="team-line">
-                    <span className="crest crest--away" aria-hidden="true">
-                      {initials(match.away.name)}
-                    </span>
-                    <span className="team-line__name">{match.away.name}</span>
-                    <span className="team-line__score">
-                      {match.awayScore}
-                    </span>
-                  </div>
-                </div>
-
-                <div className="match-card__foot">
-                  <span className="minute-chip">{match.minute}'</span>
-                  <span className="cta">Catch me up &rarr;</span>
-                </div>
-              </button>
+            {live.map((match) => (
+              <LiveCard key={match.match_id} match={match} onOpenMatch={onOpenMatch} />
             ))}
           </div>
         </section>
       )}
 
-      {upcoming.length > 0 && (
-        <section aria-labelledby="upcoming-heading">
+      {finished.length > 0 && (
+        <section aria-labelledby="finished-heading">
           <div className="section-head">
-            <h2 id="upcoming-heading">Starting soon</h2>
+            <h2 id="finished-heading">Finished</h2>
           </div>
-          <div className="fixture-lines">
-            {upcoming.map(({ match }) => (
-              <div key={match.id} className="fixture-line">
-                <time>{match.kickoff}</time>
-                <span className="teams">
-                  {match.home.name} vs {match.away.name}
-                </span>
-                <span className="comp">{match.competition}</span>
-              </div>
+          <div className="match-grid">
+            {finished.map((match) => (
+              <LiveCard key={match.match_id} match={match} onOpenMatch={onOpenMatch} />
             ))}
           </div>
         </section>
       )}
 
       <p className="page-note">
-        Illustrative mock-ups using synthetic match data.
+        Cards are generated from the live event stream (Event Hubs → match
+        state → this page).
       </p>
     </>
+  );
+}
+
+function LiveCard({
+  match,
+  onOpenMatch,
+}: {
+  match: LiveMatch;
+  onOpenMatch: (id: string) => void;
+}) {
+  const badge = statusLabel(match.status);
+  const isLive = badge === "LIVE";
+
+  return (
+    <button
+      type="button"
+      className="match-card"
+      onClick={() => onOpenMatch(match.match_id)}
+    >
+      <div className="match-card__top">
+        <span className="match-card__comp">{match.competition}</span>
+        <span className={`live-pill${isLive ? "" : " live-pill--dim"}`}>
+          {isLive && <span className="live-dot" aria-hidden="true" />}
+          {badge}
+        </span>
+      </div>
+
+      <div className="match-card__teams">
+        <div className="team-line">
+          <span className="crest crest--home" aria-hidden="true">
+            {initials(match.home?.name)}
+          </span>
+          <span className="team-line__name">{match.home?.name}</span>
+          <span className="team-line__score">{match.score.home}</span>
+        </div>
+        <div className="team-line">
+          <span className="crest crest--away" aria-hidden="true">
+            {initials(match.away?.name)}
+          </span>
+          <span className="team-line__name">{match.away?.name}</span>
+          <span className="team-line__score">{match.score.away}</span>
+        </div>
+      </div>
+
+      <div className="match-card__foot">
+        <span className="minute-chip">{match.display}</span>
+        <span className="cta">Catch me up &rarr;</span>
+      </div>
+    </button>
   );
 }

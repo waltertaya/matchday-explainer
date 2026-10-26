@@ -1,55 +1,47 @@
 /**
- * Dummy text generator for the "Catch me up" summary window —
- * deterministic copy assembled from the event stream and stat line.
- * The summary service (Azure OpenAI + grounding verifier) replaces
- * this later; components only rely on the `MatchSummary` shape.
+ * "Catch me up" summary windows, built from the live event timeline
+ * arriving over SSE. The Azure OpenAI summary service will replace this
+ * text generation later; the window/minute/claims shape stays the same.
  */
-import { eventsUpTo } from "../data/bundles";
-import type {
-  MatchBundle,
-  MatchDetail,
-  MatchEvent,
-  MatchSummary,
-  SummaryWindow,
-} from "../types";
+import { eventsUpTo, type LiveState, type TimelineEvent } from "./live";
 
-export const eventsUpToMinute = (detail: MatchDetail, minute: number) =>
-  eventsUpTo(detail.events, minute);
+export type SummaryWindow = "since-kickoff" | "last-10" | "since-joined";
 
-export function timelineMarkers(detail: MatchDetail) {
-  return detail.events
-    .filter((ev) => ev.type === "goal" || ev.type === "injury" || ev.type === "var")
-    .map((ev) => ({
-      minute: ev.minute,
-      kind: ev.type === "goal" ? ("goal" as const) : ("stoppage" as const),
-    }))
-    .filter((m, i, arr) => arr.findIndex((x) => x.minute === m.minute) === i)
-    .sort((a, b) => a.minute - b.minute);
+export interface MatchSummary {
+  title: string;
+  paragraphs: string[];
+  claims: { verified: number; total: number };
 }
 
-const teamName = (bundle: MatchBundle, side: "home" | "away") =>
-  side === "home" ? bundle.match.home.name : bundle.match.away.name;
+const teamOf = (state: LiveState, side: string) =>
+  side === "home" ? state.home?.name : state.away?.name;
+
+const goalsUpTo = (events: TimelineEvent[]) =>
+  events.filter(
+    (ev) => ev.event_type === "shot" && ev.detail?.outcome === "goal",
+  );
 
 export function buildSummary(
-  bundle: MatchBundle,
-  detail: MatchDetail,
+  state: LiveState,
   minute: number,
   win: SummaryWindow,
+  joinedAt: number,
 ): MatchSummary {
-  const { match } = bundle;
-  const all = detail.events;
+  const all = state.timeline;
+  const upTo = eventsUpTo(state, minute);
 
   const paragraphs =
     win === "last-10"
-      ? lastTen(match, all, minute)
+      ? lastTen(state, all, minute)
       : win === "since-joined"
-        ? sinceJoined(bundle, all, minute, detail.joinedAt)
-        : sinceKickoff(bundle, detail, all, minute);
+        ? sinceJoined(state, all, minute, joinedAt)
+        : sinceKickoff(state, upTo, minute);
 
+  const total = Math.min(upTo.length, 8);
   return {
-    title: titleFor(win, minute, detail.joinedAt),
+    title: titleFor(win, minute, joinedAt),
     paragraphs,
-    claims: upToClaims(minute, all),
+    claims: { verified: total, total },
   };
 }
 
@@ -64,89 +56,98 @@ function titleFor(win: SummaryWindow, minute: number, joinedAt: number) {
   }
 }
 
-/* --- window builders ------------------------------------------------ */
+/* --- windows --------------------------------------------------------- */
 
 function sinceKickoff(
-  bundle: MatchBundle,
-  detail: MatchDetail,
-  all: MatchEvent[],
+  state: LiveState,
+  upTo: TimelineEvent[],
   minute: number,
 ): string[] {
-  const { match } = bundle;
-  const upTo = eventsUpTo(all, minute);
-  const goals = upTo.filter((ev) => ev.type === "goal");
+  const goals = goalsUpTo(upTo);
+  const h = state.home?.name ?? "the home side";
+  const a = state.away?.name ?? "the away side";
 
   let scored: string;
   if (goals.length >= 2) {
     const [first, second] = goals;
     const gap = second.minute - first.minute;
-    scored = `${teamName(bundle, first.side)} scored first, on ${first.minute}'. ${teamName(
-      bundle,
+    const gapText =
+      gap === 1
+        ? "a minute later"
+        : gap === 2
+          ? "two minutes later"
+          : `${gap} minutes later`;
+    scored = `${teamOf(state, first.side)} scored first, on ${first.minute}'. ${teamOf(
+      state,
       second.side,
-    )} ${gap === 2 ? "levelled two minutes later" : `${gap === 1 ? "levelled a minute later" : `levelled ${gap} minutes later`}`}.`;
+    )} levelled ${gapText}.`;
   } else if (goals.length === 1) {
-    const g = goals[0];
-    scored = `${teamName(bundle, g.side)} lead through their ${g.minute}' strike.`;
+    scored = `${teamOf(state, goals[0].side)} lead through their ${goals[0].minute}' strike.`;
   } else {
-    scored = `It is still ${match.homeScore}–${match.awayScore} at ${minute}'.`;
+    scored = `It is still ${state.score.home}–${state.score.away} at ${minute}'.`;
   }
 
-  const possessionLine =
-    detail.statExplanations.find((ex) => ex.statId === "possession")
-      ?.inThisMatchOverride ?? "";
+  const s = state.stats;
+  const leader = s.possession.home >= s.possession.away ? h : a;
+  const other = leader === h ? a : h;
+  const poss = Math.round(
+    leader === h ? s.possession.home : s.possession.away,
+  );
+  const shotLine =
+    leader === h
+      ? `${h} have had more of the ball (${poss}%), but ${a} have had more shots (${s.shots.away} to ${s.shots.home}).`
+      : `${a} have had more of the ball (${poss}%), but ${h} have had more shots (${s.shots.home} to ${s.shots.away}).`;
+  void other;
 
-  const stoppage = [...upTo]
-    .reverse()
-    .find((ev) => ev.type === "injury" || ev.type === "var");
+  const stoppages = upTo.filter(
+    (ev) => ev.event_type === "injury" || ev.event_type === "var",
+  );
+  const lastStoppage = stoppages[stoppages.length - 1];
   const stoppageLine =
-    stoppage && minute - stoppage.minute <= 15 ? ` ${stoppage.sentence}` : "";
+    lastStoppage && minute - lastStoppage.minute <= 15
+      ? ` Play was paused on ${lastStoppage.minute}' — ${lastStoppage.label.toLowerCase()}.`
+      : "";
 
-  return [scored, `${possessionLine}${stoppageLine}`.trim()].filter(Boolean);
+  return [scored, `${shotLine}${stoppageLine}`.trim()];
 }
 
 function lastTen(
-  match: MatchBundle["match"],
-  all: MatchEvent[],
+  state: LiveState,
+  all: TimelineEvent[],
   minute: number,
 ): string[] {
   const from = Math.max(0, minute - 10);
-  const slice = eventsUpTo(all, minute).filter((ev) => ev.minute > from);
+  const slice = all.filter((ev) => ev.minute > from && ev.minute <= minute);
 
   const story =
     slice.length > 0
-      ? slice.map((ev) => ev.sentence).join(" ")
+      ? slice.map((ev) => `On ${ev.display} — ${ev.label.toLowerCase()}.`).join(" ")
       : `The last ten minutes, to ${minute}', brought no major stoppages or goals.`;
 
-  return [story, `The clock reads ${minute}' and ${match.competition} play continues.`];
-}
-
-function sinceJoined(
-  bundle: MatchBundle,
-  all: MatchEvent[],
-  minute: number,
-  joinedAt: number,
-): string[] {
-  const upTo = eventsUpTo(all, minute);
-  const slice = upTo.filter((ev) => ev.minute > joinedAt);
-  const goalCount = (side: "home" | "away") =>
-    eventsUpTo(all, joinedAt).filter((ev) => ev.type === "goal" && ev.side === side).length;
-
-  const story =
-    slice.length > 0
-      ? slice.map((ev) => ev.sentence).join(" ")
-      : `Since then the game has settled into a steady rhythm, with ${bundle.match.away.name} seeing more of the ball.`;
-
   return [
-    `You joined on ${joinedAt}' with the score at ${bundle.match.home.name} ${goalCount("home")}–${goalCount("away")} ${bundle.match.away.name}.`,
     story,
+    `The clock reads ${minute}' and the ${state.competition ?? "match"} continues.`,
   ];
 }
 
-/* --- claims ---------------------------------------------------------- */
+function sinceJoined(
+  state: LiveState,
+  all: TimelineEvent[],
+  minute: number,
+  joinedAt: number,
+): string[] {
+  const goalsAtJoin = goalsUpTo(all.filter((ev) => ev.minute <= joinedAt));
+  const joinHome = goalsAtJoin.filter((ev) => ev.side === "home").length;
+  const joinAway = goalsAtJoin.length - joinHome;
 
-function upToClaims(minute: number, events: MatchEvent[]) {
-  const upTo = eventsUpTo(events, minute);
-  const total = Math.min(upTo.length, 8);
-  // Every generated sentence is grounded on an event, so all claims verify.
-  return { verified: total, total };
+  const slice = all.filter((ev) => ev.minute > joinedAt && ev.minute <= minute);
+  const story =
+    slice.length > 0
+      ? slice.map((ev) => `On ${ev.display} — ${ev.label.toLowerCase()}.`).join(" ")
+      : "Since then the game has settled into a steady rhythm.";
+
+  return [
+    `You joined on ${joinedAt}' with the score at ${state.home?.name} ${joinHome}–${joinAway} ${state.away?.name}.`,
+    story,
+  ];
 }

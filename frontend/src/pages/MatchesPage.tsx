@@ -48,16 +48,21 @@ export function MatchesPage({
     (m) => m.status === "live" || m.status === "half_time",
   );
   const finished = (matches ?? []).filter((m) => m.status === "full_time");
+  const upcoming = (matches ?? []).filter(
+    (m) => m.status !== "live" && m.status !== "half_time" && m.status !== "full_time",
+  );
 
   return (
     <>
       <header className="hero">
-        <h1 className="hero__title">Live matches</h1>
+        <h1 className="hero__title">Every match. A little clearer.</h1>
         <p className="hero__tagline">
           Tap a match for plain-language summaries, stat explainers and the law
           behind every whistle — updated live from the event stream.
         </p>
       </header>
+
+      {matches === null && !error && <p className="page-note" role="status">Loading matches…</p>}
 
       {error && (
         <p className="page-note">
@@ -67,9 +72,21 @@ export function MatchesPage({
 
       {!error && matches !== null && matches.length === 0 && (
         <p className="page-note">
-          No live matches yet. Stream events into the pipeline and the cards
+          No matches yet. Save a match file or stream events and the cards
           will appear here automatically.
         </p>
+      )}
+
+      {upcoming.length > 0 && (
+        <section aria-labelledby="upcoming-heading">
+          <div className="section-head">
+            <h2 id="upcoming-heading">Upcoming</h2>
+            <span className="count">{upcoming.length}</span>
+          </div>
+          <div className="match-grid">
+            {upcoming.map((match) => <LiveCard key={match.match_id} match={match} onOpenMatch={onOpenMatch} />)}
+          </div>
+        </section>
       )}
 
       {live.length > 0 && (
@@ -90,6 +107,7 @@ export function MatchesPage({
         <section aria-labelledby="finished-heading">
           <div className="section-head">
             <h2 id="finished-heading">Finished</h2>
+            <span className="count">{finished.length}</span>
           </div>
           <div className="match-grid">
             {finished.map((match) => (
@@ -100,8 +118,7 @@ export function MatchesPage({
       )}
 
       <p className="page-note">
-        Cards are generated from the live event stream (Event Hubs → match
-        state → this page).
+        Live updates and saved matches, all in one place. Select a match to catch up.
       </p>
     </>
   );
@@ -124,7 +141,7 @@ function LiveCard({
       onClick={() => onOpenMatch(match.match_id)}
     >
       <div className="match-card__top">
-        <span className="match-card__comp">{match.competition}</span>
+        <span className="match-card__comp">{match.competition ?? "Football"}</span>
         <span className={`live-pill${isLive ? "" : " live-pill--dim"}`}>
           {isLive && <span className="live-dot" aria-hidden="true" />}
           {badge}
@@ -134,22 +151,22 @@ function LiveCard({
       <div className="match-card__teams">
         <div className="team-line">
           <span className="crest crest--home" aria-hidden="true">
-            {initials(match.home?.name)}
+            {initials(match.home?.name ?? "Home")}
           </span>
-          <span className="team-line__name">{match.home?.name}</span>
-          <span className="team-line__score">{match.score.home}</span>
+          <span className="team-line__name">{match.home?.name ?? "Home team"}</span>
+          <span className="team-line__score">{match.status === "pre_match" ? "–" : match.score.home}</span>
         </div>
         <div className="team-line">
           <span className="crest crest--away" aria-hidden="true">
-            {initials(match.away?.name)}
+            {initials(match.away?.name ?? "Away")}
           </span>
-          <span className="team-line__name">{match.away?.name}</span>
-          <span className="team-line__score">{match.score.away}</span>
+          <span className="team-line__name">{match.away?.name ?? "Away team"}</span>
+          <span className="team-line__score">{match.status === "pre_match" ? "–" : match.score.away}</span>
         </div>
       </div>
 
       <div className="match-card__foot">
-        <span className="minute-chip">{match.display}</span>
+        <span className="minute-chip">{match.source === "saved" ? "Saved" : match.status === "pre_match" ? "Soon" : match.display}</span>
         <span className="cta">Catch me up &rarr;</span>
       </div>
     </button>

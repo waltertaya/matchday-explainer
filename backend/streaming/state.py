@@ -26,7 +26,9 @@ MATCH_KEY = "match:{match_id}"
 INDEX_KEY = "matches:index"
 CHANNEL = "match:{match_id}:updates"
 
-_pool = redis.ConnectionPool.from_url(REDIS_URL, decode_responses=True)
+_pool = redis.ConnectionPool.from_url(
+    REDIS_URL, decode_responses=True, socket_connect_timeout=1, socket_timeout=2,
+)
 
 
 def r() -> redis.Redis:

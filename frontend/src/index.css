@@ -5,9 +5,9 @@
 
 :root {
   /* Surfaces */
-  --bg: #f1f3ea;
+  --bg: #f4f6ef;
   --surface: #ffffff;
-  --pitch: #14352a; /* dark green header / phone body */
+  --pitch: #103c30; /* dark green header / phone body */
   --pitch-soft: #1c4a3a;
   --cream: #f3f5ec;
 
@@ -18,7 +18,7 @@
   --faint: #93a29a;
 
   /* Accents */
-  --gold: #e7b737;
+  --gold: #f5c627;
   --gold-deep: #c99a22;
   --gold-soft: #fdf5dc;
   --gold-row-border: #e5c257;
@@ -532,7 +532,7 @@ img {
 }
 
 .summary-card__title {
-  color: var(--gold-deep);
+  color: var(--teal);
   font-weight: 700;
   font-size: 1rem;
   margin-bottom: 10px;
@@ -542,7 +542,7 @@ img {
   font-family: var(--font-serif);
   font-size: 1.06rem;
   line-height: 1.62;
-  color: #3a4a43;
+  color: var(--ink);
 }
 
 .summary-card__story p {
@@ -942,9 +942,7 @@ img {
 }
 
 .sheet__close {
-  position: absolute;
-  top: 10px;
-  right: 12px;
+  position: relative;
   width: 34px;
   height: 34px;
   border-radius: 50%;
@@ -1087,4 +1085,72 @@ img {
   text-align: center;
   font-size: 0.9rem;
   margin-top: 34px;
+}
+
+/* Match screens follow the compact scoreboard and rounded cream panels of
+   presentations/03-product-screens.png, without a decorative phone frame. */
+.match-experience {
+  max-width: 560px;
+  margin: 0 auto;
+}
+
+.experience-heading {
+  text-align: center;
+  margin: 8px 0 26px;
+}
+
+.experience-heading h1 { font-size: clamp(1.65rem, 6vw, 2rem); }
+.experience-heading p {
+  font-family: var(--font-serif);
+  font-style: italic;
+  color: var(--muted);
+  margin-top: 8px;
+}
+
+.match-header { padding: 20px 24px 22px; border-radius: 26px 26px 14px 14px; }
+.match-header__competition {
+  color: #bbd2c7;
+  font-size: 0.76rem;
+  text-align: center;
+  margin-bottom: 14px;
+}
+.summary-card { border: 2px solid #dce6df; box-shadow: none; border-radius: 22px; }
+.stat-row, .event-row { border: 2px solid #dce6df; box-shadow: none; }
+.stat-row.is-selected, .event-row.is-selected { border-color: var(--gold); }
+.event-row__label { font-weight: 500; }
+.event-row.is-selected .event-row__label { font-weight: 700; }
+.sheet { border: 2px solid #dce6df; }
+.sheet__title { padding-right: 34px; }
+.sheet__close-wrap { margin: 0; }
+.explanation-context { color: var(--muted); font-size: 0.88rem; margin: 4px 0 18px; }
+.explanation-status { color: var(--muted); font-size: 0.85rem; margin: 14px 0; }
+.retry-btn {
+  display: inline-block;
+  padding: 7px 14px;
+  background: var(--chip);
+  color: var(--pitch);
+  border-radius: 999px;
+  font-weight: 650;
+  font-size: 0.85rem;
+  margin-top: 10px;
+}
+.follow-live { display: block; }
+.data-limits { border-left: 3px solid var(--gold); padding-left: 12px; color: var(--muted); font-size: 0.9rem; margin-top: 16px; }
+.source-passage { margin-top: 12px; font-size: 0.85rem; color: var(--muted); }
+.source-passage summary { cursor: pointer; font-weight: 600; overflow-wrap: anywhere; }
+.source-passage p { margin-top: 8px; white-space: pre-wrap; }
+.source-passage li { margin-top: 8px; }
+.summary-evidence { margin-top: 16px; }
+
+@media (max-width: 430px) {
+  .match-tab { padding-inline: 9px; font-size: 0.86rem; }
+  .panel-head { flex-wrap: wrap; gap: 4px; }
+  .chip-tabs { gap: 6px; }
+  .chip-tab { padding: 8px 11px; font-size: 0.8rem; }
+  .stat-row { padding: 12px; }
+  .stat-row__label { font-size: 0.85rem; flex: 2; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
 }

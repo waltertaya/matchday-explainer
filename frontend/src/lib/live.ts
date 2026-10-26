@@ -43,6 +43,7 @@ export interface MatchStats {
 export type MatchStatus = "pre_match" | "live" | "half_time" | "full_time";
 
 export interface LiveMatch {
+  source?: "live" | "saved";
   match_id: string;
   home: TeamRef;
   away: TeamRef;
@@ -111,7 +112,12 @@ export function statRowsFromState(state: LiveState) {
     { id: "possession", label: "Possession", home: s.possession.home, away: s.possession.away, format: "percent" as const },
     { id: "xg", label: "xG", home: s.xg.home, away: s.xg.away, format: "xg" as const },
     { id: "shots", label: "Shots", home: s.shots.home, away: s.shots.away, format: "number" as const },
+    { id: "shots_on_target", label: "On target", home: s.shots_on_target.home, away: s.shots_on_target.away, format: "number" as const },
     { id: "fouls", label: "Fouls", home: s.fouls.home, away: s.fouls.away, format: "number" as const },
+    { id: "corners", label: "Corners", home: s.corners.home, away: s.corners.away, format: "number" as const },
+    { id: "yellow_cards", label: "Yellow cards", home: s.yellow_cards.home, away: s.yellow_cards.away, format: "number" as const },
+    { id: "red_cards", label: "Red cards", home: s.red_cards.home, away: s.red_cards.away, format: "number" as const },
+    { id: "offsides", label: "Offsides", home: s.offsides.home, away: s.offsides.away, format: "number" as const },
   ];
 }
 
@@ -123,28 +129,16 @@ export function formatStat(value: number, format: "percent" | "xg" | "number") {
 
 /** "In this match" copy generated from the live numbers. */
 export function inMatchLine(statId: string, state: LiveState): string {
-  const s = state.stats;
   const h = state.home?.name ?? "The home side";
   const a = state.away?.name ?? "the away side";
-  switch (statId) {
-    case "possession":
-      return `${h} have had ${Math.round(s.possession.home)}% of the ball to ${a}'s ${Math.round(s.possession.away)}%.`;
-    case "xg": {
-      const total = Math.round((s.xg.home + s.xg.away) * 100) / 100;
-      const goals = s.shots && state.score.home + state.score.away;
-      const tail =
-        goals > total
-          ? ` ${goals} goals have gone in — more than the chances alone suggest.`
-          : " The goals so far line up with the quality of the chances.";
-      return `Together the teams have ${total} xG.${tail}`;
-    }
-    case "shots":
-      return `The shot count is ${s.shots.home} to ${s.shots.away} between ${h} and ${a}.`;
-    case "fouls":
-      return `Fouls so far: ${s.fouls.home} for ${h}, ${s.fouls.away} for ${a}.`;
-    default:
-      return "";
+  const row = statRowsFromState(state).find((stat) => stat.id === statId);
+  if (!row) return "";
+  if (statId === "xg") {
+    const total = state.stats.xg.home + state.stats.xg.away;
+    const goals = state.score.home + state.score.away;
+    return `${h}: ${row.home.toFixed(2)} xG. ${a}: ${row.away.toFixed(2)} xG. Together: ${total.toFixed(2)} xG, with ${goals} goals recorded. Expected goals is not a prediction of the score.`;
   }
+  return `${h}: ${formatStat(row.home, row.format)}. ${a}: ${formatStat(row.away, row.format)}.`;
 }
 
 /** Events shown in the "Why that whistle?" list (design's Match events). */
@@ -159,9 +153,15 @@ export function lawForEvent(ev: TimelineEvent): string {
     case "shot":
       return "goal";
     case "foul":
-      return "foul";
+      return ev.detail?.consequence === "penalty" ? "penalty" : "foul";
     case "card":
-      return ev.detail?.card === "red" ? "foul" : "yellow-card";
+      return ev.detail?.card === "red" ? "red-card" : "yellow-card";
+    case "yellow-card":
+    case "red-card":
+    case "penalty":
+    case "goal":
+    case "free-kick":
+      return ev.event_type;
     case "injury":
       return "injury";
     case "substitution":

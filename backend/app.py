@@ -6,6 +6,8 @@ from api import db
 from api.routes import bp
 from api.ifab_routes import ifab_bp
 from api.rag_routes import rag_bp
+from api.match_summary_routes import match_summary_bp
+from api.match_stats_routes import match_stats_bp
 
 
 def create_app():
@@ -25,6 +27,8 @@ def create_app():
     app.register_blueprint(bp, url_prefix='/api/v1')
     app.register_blueprint(ifab_bp, url_prefix='/api/v1/ifabs')
     app.register_blueprint(rag_bp, url_prefix='/api/v1/rag')
+    app.register_blueprint(match_summary_bp, url_prefix='/api/v1')
+    app.register_blueprint(match_stats_bp, url_prefix='/api/v1')
 
     @app.errorhandler(Exception)
     def handle_error(e):

@@ -45,6 +45,25 @@ _checkpoint_every = 25
 _counter = {"n": 0}
 
 
+def on_error(partition_context, error):
+    partition = getattr(partition_context, "partition_id", "connection")
+    print(f"Consumer error [{partition}]: {error}", file=sys.stderr, flush=True)
+    message = str(error).lower()
+    if "amqp:not-found" in message or "could not be found" in message:
+        print(
+            f"The Event Hub '{EVENTHUB_NAME}' or consumer group '{CONSUMER_GROUP}' "
+            "does not exist. In Azure Portal, open your Event Hub > Consumer groups "
+            f"and create '{CONSUMER_GROUP}', then restart this consumer. "
+            "A running process does not mean events are being received.",
+            file=sys.stderr, flush=True,
+        )
+
+
+def on_partition_initialize(partition_context):
+    print(f"Receiving partition {partition_context.partition_id} "
+          f"as consumer group '{CONSUMER_GROUP}'", flush=True)
+
+
 def on_event(partition_context, event):
     try:
         payload = json.loads(event.body_as_str(encoding="utf-8"))
@@ -97,6 +116,8 @@ def main() -> int:
         # has no checkpoint yet; owned checkpoints always win afterwards.
         client.receive(
             on_event=on_event,
+            on_error=on_error,
+            on_partition_initialize=on_partition_initialize,
             starting_position="-1",
         )
     except KeyboardInterrupt:

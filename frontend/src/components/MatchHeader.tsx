@@ -14,9 +14,11 @@ export function MatchHeader({ state }: { state: LiveState }) {
 
   return (
     <section className="match-header" aria-label="Match score">
+      <p className="match-header__competition">{state.competition ?? "Football"}</p>
+      {state.source === "saved" && <p className="match-header__competition">Saved match file · not a live stream</p>}
       <div className="match-header__names">
-        <span>{state.home?.name}</span>
-        <span>{state.away?.name}</span>
+        <span>{state.home?.name ?? "Home team"}</span>
+        <span>{state.away?.name ?? "Away team"}</span>
       </div>
       <div className="match-header__score">
         <span className="score" aria-live="polite">

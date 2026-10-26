@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { TimelineScrubber } from "./TimelineScrubber";
-import { buildSummary, type SummaryWindow } from "../lib/summary";
+import type { SummaryWindow } from "../lib/summary";
+import { useExplanation, type SummaryResponse } from "../lib/explanations";
 import { timelineMarkers, type LiveState } from "../lib/live";
 
 const WINDOWS: Array<{ id: SummaryWindow; label: string }> = [
@@ -22,9 +23,22 @@ export function SummaryTab({
   const [win, setWin] = useState<SummaryWindow>("since-kickoff");
   // null = follow the live clock; a number = the user has scrubbed
   const [scrubbed, setScrubbed] = useState<number | null>(null);
-  const minute = scrubbed ?? state.minute;
+  const [snapshot, setSnapshot] = useState(state);
+  const latest = useRef(state);
+  useEffect(() => { latest.current = state; }, [state]);
+  useEffect(() => {
+    // Let an AI request finish even during accelerated event replays. Sampling
+    // every 30 seconds avoids cancelling it on every incoming SSE frame.
+    const timer = setInterval(() => setSnapshot(latest.current), 30_000);
+    return () => clearInterval(timer);
+  }, []);
+  const minute = Math.min(scrubbed ?? snapshot.minute, state.minute);
 
-  const summary = buildSummary(state, minute, win, joinedAt);
+  const { data: summary, loading, error, retry } = useExplanation<SummaryResponse>(
+    `/matches/${encodeURIComponent(state.match_id)}/summary`,
+    { minute, window: win, joined_at: Math.min(joinedAt, state.minute) },
+    snapshot.last_seq,
+  );
   const markers = timelineMarkers(state);
 
   return (
@@ -36,7 +50,7 @@ export function SummaryTab({
             role="tab"
             aria-selected={win === w.id}
             className={`chip-tab${win === w.id ? " is-active" : ""}`}
-            onClick={() => setWin(w.id)}
+            onClick={() => { setWin(w.id); setSnapshot(state); }}
           >
             {w.label}
           </button>
@@ -44,13 +58,16 @@ export function SummaryTab({
       </div>
 
       <article className="summary-card">
-        <p className="summary-card__title">{summary.title}</p>
+        <p className="summary-card__title">{summary?.title ?? "Your match catch-up"}</p>
         <div className="summary-card__story">
-          {summary.paragraphs.map((p, i) => (
+          {loading && <p role="status">Preparing a summary from the match events…</p>}
+          {error && <div role="alert"><p>{error}</p><button className="retry-btn" onClick={retry}>Try again</button></div>}
+          {summary?.paragraphs.map((p, i) => (
             <p key={i}>{p}</p>
           ))}
         </div>
       </article>
+      {summary && <p className="explanation-status">{summary.notice ?? "AI-selected highlights · checked against match data"}</p>}
 
       {markers.length > 0 && state.minute > 0 && (
         <TimelineScrubber
@@ -61,8 +78,13 @@ export function SummaryTab({
           onChange={setScrubbed}
         />
       )}
+      {scrubbed !== null && (
+        <button className="retry-btn follow-live" onClick={() => { setScrubbed(null); setSnapshot(state); }}>
+          {state.status === "full_time" ? "Back to full-time" : "Back to live"}
+        </button>
+      )}
 
-      {summary.claims.total > 0 && (
+      {summary && summary.claims.total > 0 && (
         <div className="claims-badge">
           <span className="dot" aria-hidden="true">
             <svg viewBox="0 0 24 24">
@@ -72,6 +94,10 @@ export function SummaryTab({
           {summary.claims.verified} of {summary.claims.total} claims verified
         </div>
       )}
+      {summary && <details className="source-passage summary-evidence">
+        <summary>View supporting match data</summary>
+        <ul>{summary.evidence.map((fact) => <li key={fact.id}><code>{fact.id}</code> — {fact.text}</li>)}</ul>
+      </details>}
 
       {state.timeline.length === 0 && (
         <p className="page-note">

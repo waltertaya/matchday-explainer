@@ -10,8 +10,6 @@ from openai import OpenAI
 from . import config
 
 
-client = OpenAI()
-
 EMBED_CACHE = Path(config.DATA_DIR) / "embeddings_cache.json"
 EXPECTED_DIMENSIONS = config.EMBEDDING_DIMENSIONS
 
@@ -64,6 +62,7 @@ def embed_texts(
         unique_keys = list(missing.keys())
         unique_texts = list(missing.values())
 
+        client = OpenAI(timeout=20, max_retries=0)
         response = client.embeddings.create(
             input=unique_texts,
             model=model,

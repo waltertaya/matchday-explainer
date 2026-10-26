@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import sys
 import time
@@ -34,6 +35,28 @@ def load_jsonl(path: str) -> list[dict]:
         return [json.loads(line) for line in fh if line.strip()]
 
 
+def replay_speed(value: str) -> float:
+    speed = float(value)
+    if not math.isfinite(speed) or speed < 0:
+        raise argparse.ArgumentTypeError("speed must be a finite number greater than or equal to 0")
+    return speed
+
+
+def paced_events(lines: list[dict], speed: float):
+    """Yield kickoff immediately, then pace publication, not just batch filling."""
+    if not math.isfinite(speed) or speed < 0:
+        raise ValueError("speed must be finite and non-negative")
+    previous = None
+    for line in lines:
+        timestamp = datetime.fromisoformat(line["recorded_at"].replace("Z", "+00:00")).timestamp()
+        if previous is not None and speed > 0:
+            delay = (timestamp - previous) / speed
+            if delay > 0:
+                time.sleep(delay)
+        previous = timestamp
+        yield line
+
+
 def send_to_eventhub(lines: list[dict], speed: float) -> None:
     from azure.eventhub import EventHubProducerClient, EventData
 
@@ -48,25 +71,31 @@ def send_to_eventhub(lines: list[dict], speed: float) -> None:
         conn, eventhub_name=name,
     )
     print(f"Streaming {len(lines)} events to hub '{name}' "
-          f"{'as fast as possible' if speed == 0 else f'at {speed}x'}…")
+          f"{'as fast as possible' if speed == 0 else f'at {speed}x'}…", flush=True)
     with producer:
-        batch = producer.create_batch()
-        prev_ts = None
-        for line in lines:
-            ts = datetime.fromisoformat(
-                line["recorded_at"].replace("Z", "+00:00"),
-            ).timestamp()
-            if prev_ts is not None and speed > 0:
-                time.sleep(max(0.0, (ts - prev_ts) / speed))
-            prev_ts = ts
-            try:
-                batch.add(EventData(json.dumps(line, separators=(",", ":"))))
-            except ValueError:
-                producer.send_batch(batch)  # batch full -> flush and retry
-                batch = producer.create_batch()
-                batch.add(EventData(json.dumps(line, separators=(",", ":"))))
-        producer.send_batch(batch)
-    print("Done — events are in the hub; the start-builder consumer picks them up.")
+        for line in paced_events(lines, speed):
+            # Flush EACH event before waiting for the next one. Keeping one
+            # growing batch here delays the entire match until full-time.
+            # A match-specific partition key also preserves sequence order.
+            batch = producer.create_batch(partition_key=line["match_id"])
+            batch.add(EventData(json.dumps(line, separators=(",", ":"))))
+            producer.send_batch(batch)
+            print(f"  sent #{line['seq']} [{line['match_clock']['display']}] "
+                  f"{line['type']}", flush=True)
+    print("Done — all events published. The running streaming.consumer "
+          "must project them into Redis for live API updates.", flush=True)
+
+
+def send_to_redis(lines: list[dict], speed: float) -> None:
+    label = "as fast as possible" if speed == 0 else f"at {speed}x"
+    print(f"Replaying into local Redis {label}…", flush=True)
+    for line in paced_events(lines, speed):
+        state = ingest_event(line)
+        if state and line["type"] in ("match_status", "shot"):
+            print(f"  [{line['match_clock']['display']}] "
+                  f"{state['score']['home']}-{state['score']['away']} "
+                  f"({line['type']})", flush=True)
+    print("Replay finished — state is in Redis, SSE endpoint is live.")
 
 
 def main() -> int:
@@ -74,7 +103,7 @@ def main() -> int:
     parser.add_argument("--file", required=True, help="path to a .jsonl match")
     parser.add_argument("--to-eventhub", action="store_true",
                         help="send to Azure Event Hubs instead of local Redis")
-    parser.add_argument("--speed", type=float, default=1.0,
+    parser.add_argument("--speed", type=replay_speed, default=1.0,
                         help="replay speed multiplier (0 = no pacing)")
     args = parser.parse_args()
 
@@ -85,21 +114,7 @@ def main() -> int:
         send_to_eventhub(lines, args.speed)
         return 0
 
-    label = "as fast as possible" if args.speed == 0 else f"at {args.speed}x"
-    print(f"Replaying into local Redis {label}…")
-    fmt = "%Y-%m-%dT%H:%M:%S%z"
-    prev_ts = None
-    for line in lines:
-        ts = datetime.strptime(line["recorded_at"], fmt).timestamp()
-        if prev_ts is not None and args.speed > 0:
-            time.sleep(max(0.0, (ts - prev_ts) / args.speed))
-        prev_ts = ts
-        state = ingest_event(line)
-        if state and line["type"] in ("match_status", "shot"):
-            print(f"  [{line['match_clock']['display']}] "
-                  f"{state['score']['home']}-{state['score']['away']} "
-                  f"({line['type']})", flush=True)
-    print("Replay finished — state is in Redis, SSE endpoint is live.")
+    send_to_redis(lines, args.speed)
     return 0
 
 

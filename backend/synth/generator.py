@@ -27,7 +27,8 @@ Usage
     python -m synth.generator                       # random match -> data/synth/*.jsonl
     python -m synth.generator --seed 42            # reproducible match
     python -m synth.generator --out path.jsonl     # explicit output file
-    python -m synth.generator --stream             # also send to Event Hubs
+    python -m synth.generator --stream --speed 30  # generate + paced Event Hubs replay
+    python -m synth.generator --to-redis --speed 30 # generate + local live replay
                                                    # (needs azure-eventhub and
                                                    # EVENTHUB_CONNECTION_STRING /
                                                    # EVENTHUB_NAME env vars)
@@ -37,9 +38,9 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import random
 import sys
+from uuid import uuid4
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -99,9 +100,10 @@ class MatchSimulator:
         home, away = self.rng.sample(TEAMS, 2)
         self.home = {"name": home[0], "short": home[1]}
         self.away = {"name": away[0], "short": away[1]}
-        self.match_id = "synth-{}-{}-{}".format(
+        self.match_id = "synth-{}-{}-{}-{}".format(
             datetime.now(timezone.utc).strftime("%Y%m%d"),
             home[1].lower(), away[1].lower(),
+            uuid4().hex[:8],
         )
         self.competition = self.rng.choice(COMPETITIONS)
         self.venue = self.rng.choice(VENUES)
@@ -557,45 +559,26 @@ def build_match(seed: Optional[int] = None) -> MatchSimulator:
     return sim
 
 
-def send_to_event_hubs(lines: List[Dict[str, Any]]) -> None:
-    """Optional: push the JSONL batch to Azure Event Hubs.
-
-    Requires: pip install azure-eventhub
-    Env: EVENTHUB_CONNECTION_STRING, EVENTHUB_NAME
-    """
-    try:
-        from azure.eventhub import EventHubProducerClient, EventData
-    except ImportError:
-        print("azure-eventhub not installed — skipping streaming "
-              "(pip install azure-eventhub)", file=sys.stderr)
-        return
-    conn = os.getenv("EVENTHUB_CONNECTION_STRING")
-    name = os.getenv("EVENTHUB_NAME")
-    if not conn or not name:
-        print("EVENTHUB_CONNECTION_STRING / EVENTHUB_NAME not set — skipping",
-              file=sys.stderr)
-        return
-    producer = EventHubProducerClient.from_connection_string(conn, eventhub_name=name)
-    with producer:
-        batch = producer.create_batch()
-        for line in lines:
-            try:
-                batch.add(EventData(json.dumps(line, separators=(",", ":"))))
-            except ValueError:
-                producer.send_batch(batch)     # batch full -> flush
-                batch = producer.create_batch()
-                batch.add(EventData(json.dumps(line, separators=(",", ":"))))
-        producer.send_batch(batch)
-    print(f"Sent {len(lines)} events to Event Hub '{name}'")
+def send_to_event_hubs(lines: List[Dict[str, Any]], speed: float = 30.0) -> None:
+    """Use the same paced publisher as streaming.replay (also loads .env)."""
+    from streaming.replay import send_to_eventhub
+    send_to_eventhub(lines, speed)
 
 
 def main(argv: Optional[List[str]] = None) -> int:
+    from streaming.replay import replay_speed
+
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--seed", type=int, default=None,
                         help="RNG seed; omit for a different match every run")
     parser.add_argument("--out", default=None, help="output .jsonl path")
-    parser.add_argument("--stream", action="store_true",
-                        help="also send events to Azure Event Hubs")
+    destination = parser.add_mutually_exclusive_group()
+    destination.add_argument("--stream", action="store_true",
+                             help="generate and immediately replay to Azure Event Hubs")
+    destination.add_argument("--to-redis", action="store_true",
+                             help="generate and immediately replay to local Redis (no consumer needed)")
+    parser.add_argument("--speed", type=replay_speed, default=30.0,
+                        help="stream/replay speed multiplier (default: 30; 0 = no pacing)")
     args = parser.parse_args(argv)
 
     sim = build_match(seed=args.seed)
@@ -623,7 +606,15 @@ def main(argv: Optional[List[str]] = None) -> int:
     print("validation: OK (stats are a consistent projection of the events)")
 
     if args.stream:
-        send_to_event_hubs(sim.lines)
+        send_to_event_hubs(sim.lines, args.speed)
+    elif args.to_redis:
+        from streaming.replay import send_to_redis
+        send_to_redis(sim.lines, args.speed)
+    else:
+        print("Saved only — no live events published. To generate AND stream, use:\n"
+              "  python -m synth.generator --stream --speed 30\n"
+              "Or without Azure:\n"
+              "  python -m synth.generator --to-redis --speed 30")
     return 0
 
 

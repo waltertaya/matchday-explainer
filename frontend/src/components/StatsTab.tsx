@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { BottomSheet } from "./BottomSheet";
-import { AUDIENCES, statExplanations } from "../data/explanations";
+import { AUDIENCES } from "../data/explanations";
+import { useExplanation, type StatResponse } from "../lib/explanations";
 import {
   formatStat,
   inMatchLine,
@@ -23,8 +24,11 @@ export function StatsTab({ state }: { state: LiveState }) {
 
   const rows = statRowsFromState(state);
   const openRow = rows.find((r) => r.id === openStatId) ?? null;
-  const openExplanation = statExplanations.find(
-    (e) => e.statId === openStatId,
+  const { data, loading, error, retry } = useExplanation<StatResponse>(
+    openRow
+      ? `/matches/${encodeURIComponent(state.match_id)}/stats/${openRow.id}/explanation`
+      : null,
+    { audience },
   );
 
   return (
@@ -62,7 +66,7 @@ export function StatsTab({ state }: { state: LiveState }) {
         ))}
       </div>
 
-      {openRow && openExplanation && (
+      {openRow && (
         <BottomSheet
           open
           onClose={() => setOpenStatId(null)}
@@ -82,11 +86,15 @@ export function StatsTab({ state }: { state: LiveState }) {
             ))}
           </div>
 
-          <p className="sheet-sub">What it is</p>
-          <p className="sheet-prose">{openExplanation.whatItIs[audience]}</p>
-
-          <p className="sheet-sub">In this match</p>
-          <p className="sheet-prose">{inMatchLine(openRow.id, state)}</p>
+          {loading && <p className="explanation-status" role="status">Preparing your explanation…</p>}
+          {error && <div className="explanation-status" role="alert"><p>{error}</p><button className="retry-btn" onClick={retry}>Try again</button></div>}
+          {data && <>
+            <p className="sheet-sub">What it is</p>
+            <p className="sheet-prose">{data.what_it_is}</p>
+            <p className="sheet-sub">In this match</p>
+            <p className="sheet-prose">{inMatchLine(openRow.id, state)}</p>
+            <p className="explanation-status">{data.notice ?? "AI explanation · numbers from the match stream"}</p>
+          </>}
         </BottomSheet>
       )}
     </div>

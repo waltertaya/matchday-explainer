@@ -21,6 +21,7 @@ export function MatchPage({
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<MatchTab>("catch-up");
   const [joinedAt, setJoinedAt] = useState<number | null>(null);
+  const [connected, setConnected] = useState(true);
 
   useEffect(() => {
     let alive = true;
@@ -31,12 +32,15 @@ export function MatchPage({
         if (!alive) return;
         setError(null);
         // "Since I joined" starts at the minute the screen was opened.
-        setJoinedAt((prev) => prev ?? initial.minute);
+        setJoinedAt(initial.minute);
         setState(initial);
         // Live updates: every state change in Redis is pushed over SSE.
         unsubscribe = subscribeMatch(matchId, (next) => {
+          if (!alive) return;
+          setConnected(true);
+          // A new replay can legitimately restart at a lower sequence number.
           setState(next);
-        });
+        }, () => { if (alive) setConnected(false); });
       })
       .catch((e) => {
         if (alive) setError(String(e.message ?? e));
@@ -67,8 +71,13 @@ export function MatchPage({
   }
 
   return (
-    <>
+    <div className="match-experience">
+      <header className="experience-heading">
+        <h1>{tab === "catch-up" ? "Catch me up" : tab === "stats" ? "Tap any stat" : "Why that whistle?"}</h1>
+        <p>{tab === "catch-up" ? "A summary for any minute of the match" : tab === "stats" ? "Plain-language explanations for every number" : "The law behind each referee decision"}</p>
+      </header>
       <MatchHeader state={state} />
+      {!connected && <p className="explanation-status" role="status">Live connection interrupted. Reconnecting automatically…</p>}
       <MatchTabs active={tab} onChange={setTab} />
 
       {tab === "catch-up" && (
@@ -78,9 +87,9 @@ export function MatchPage({
       {tab === "whistle" && <EventsTab state={state} />}
 
       <p className="colophon">
-        Every claim is checked against the event stream. Explains the rule, not
-        a verdict on the call.
+        Match facts from the event stream. Rules from the IFAB Laws.
+        Explains the rule, not a verdict on the call.
       </p>
-    </>
+    </div>
   );
 }

@@ -31,7 +31,7 @@ export default function App() {
               <svg viewBox="0 0 24 24" aria-hidden="true">
                 <path d="M15.4 4.6 14 3.2 5.2 12l8.8 8.8 1.4-1.4L8 12z" />
               </svg>
-              All live matches
+              All matches
             </button>
           ) : (
             <span className="brand">
@@ -55,6 +55,7 @@ export default function App() {
         )}
         {route === "match" && matchId && (
           <MatchPage
+            key={matchId}
             matchId={matchId}
             onBack={() => setRoute("matches")}
           />

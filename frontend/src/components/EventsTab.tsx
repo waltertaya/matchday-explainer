@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { BottomSheet } from "./BottomSheet";
-import { lawDetails } from "../data/explanations";
+import { eventTitles } from "../data/explanations";
+import { useExplanation, type LawResponse } from "../lib/explanations";
 import {
   lawForEvent,
   whistleEvents,
@@ -8,28 +9,27 @@ import {
   type TimelineEvent,
 } from "../lib/live";
 
-/* "Why that whistle?" screen — the match events list is the live
-   timeline projected by the state builder; the sheet explains the law
-   behind each decision (static IFAB glossary until Referee RAG lands). */
+/* Explanations are requested only after selecting an event. */
 export function EventsTab({ state }: { state: LiveState }) {
   const events = whistleEvents(state);
 
-  const defaultEvent =
-    events.find((ev) => ev.event_type === "foul") ??
-    events.find((ev) => ev.event_type === "card") ??
-    events[0];
-  const [openEventId, setOpenEventId] = useState<string | null>(
-    defaultEvent ? String(defaultEvent.seq) : null,
-  );
+  const [openEventId, setOpenEventId] = useState<string | null>(null);
 
   const openEvent =
     events.find((ev) => String(ev.seq) === openEventId) ?? null;
-  const law = openEvent ? lawDetails[lawForEvent(openEvent)] : undefined;
+  const title = openEvent ? eventTitles[lawForEvent(openEvent)] : undefined;
+  const { data, loading, error, retry } = useExplanation<LawResponse>(
+    openEvent
+      ? `/rag/matches/${encodeURIComponent(state.match_id)}/events/${openEvent.seq}/explanation`
+      : null,
+    {},
+  );
 
   return (
     <div className="panel">
       <div className="panel-head">
         <h2>Match events</h2>
+        <span className="hint">Tap an event to explore the law</span>
       </div>
 
       <div className="event-rows">
@@ -50,34 +50,37 @@ export function EventsTab({ state }: { state: LiveState }) {
         )}
       </div>
 
-      {openEvent && law && (
-        <BottomSheet open onClose={() => setOpenEventId(null)} title={law.title}>
-          <p className="sheet-prose">{law.body}</p>
-
-          {law.legend && (
-            <table className="law-legend">
-              <tbody>
-                {law.legend.map((row) => (
-                  <tr key={row.term}>
-                    <td>
-                      <span className="term">
-                        <span
-                          className="swatch"
-                          style={{ background: row.swatch }}
-                          aria-hidden="true"
-                        />
-                        {row.term}
-                      </span>
-                    </td>
-                    <td className="outcome">{row.outcome}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+      {openEvent && (
+        <BottomSheet open onClose={() => setOpenEventId(null)} title={title ?? "What does the law say?"}>
+          <p className="explanation-context">{openEvent.display} · {openEvent.label}</p>
+          {loading && <p className="explanation-status" role="status">Looking up the IFAB Laws…</p>}
+          {error && (
+            <div className="explanation-status" role="alert">
+              <p>{error}</p>
+              <button className="retry-btn" onClick={retry}>Try again</button>
+            </div>
           )}
-
-          <hr className="law-legend__divider" />
-          <p className="law-source">Source: {law.source}</p>
+          {data && (
+            <>
+              <p className="sheet-sub">{data.answer.answerable ? "What the law says" : "Not enough evidence"}</p>
+              <p className="sheet-prose">{data.answer.explanation}</p>
+              {data.answer.data_limits && (
+                <p className="data-limits">{data.answer.data_limits}</p>
+              )}
+              <hr className="law-legend__divider" />
+              {data.answer.law_reference && <p className="law-source">Source: {data.answer.law_reference}</p>}
+              {data.answer.citations.map((id, index) => {
+                const passage = data.passages.find((p) => p.id === id);
+                const chunk = data.chunks?.find((p) => p.id === id);
+                return (
+                  <details className="source-passage" key={id}>
+                    <summary>Passage {index + 1} · {passage?.source ?? id}</summary>
+                    <p>{chunk?.content ?? "Source passage unavailable."}</p>
+                  </details>
+                );
+              })}
+            </>
+          )}
           <span className="law-disclaimer">
             Explains the rule, not a verdict on the call
           </span>

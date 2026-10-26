@@ -44,14 +44,24 @@ fact per line, shaped for Azure Event Hubs streaming.
 ./venv/bin/python -m synth.generator
 ./venv/bin/python -m synth.generator --seed 42
 ./venv/bin/python -m synth.generator --stream
+./venv/bin/python -m synth.generator --stream --speed 30
+./venv/bin/python -m synth.generator --to-redis --speed 30
 ```
 
 - Without options, each run creates a new random match.
 - `--seed 42` makes the generated match reproducible.
-- `--stream` also sends the generated events to Event Hubs.
+- `--stream` generates and immediately starts a paced Event Hubs replay
+  (30x by default). No separate replay command is needed. Keep the state
+  consumer running to project published events into Redis.
+- `--to-redis` generates and immediately replays into local Redis without Azure
+  or a separate consumer. `--speed 0` intentionally sends everything instantly.
+- With neither flag, generation only saves a file; it does not publish events.
 
-Generated files are written to `data/synth/synth-<date>-<home>-<away>.jsonl`
+Generated files are written to `data/synth/synth-<date>-<home>-<away>-<run>.jsonl`
 and contain approximately 100–110 events.
+Each generation gets a unique match ID, even for the same teams on the same
+day. This prevents file overwrites and stops Redis's sequence deduplication
+from discarding a new match as an old replay.
 
 ### Event schema principles
 
@@ -127,6 +137,18 @@ The Blob Storage container must exist before starting the consumer. The
 `archiver` consumer group, if configured, is unaffected because each consumer
 group has its own cursor.
 
+The Event Hub's **consumer group must also exist in Azure**. Setting
+`EVENTHUB_CONSUMER_GROUP=start-builder` does not create it. In Azure Portal,
+open the Event Hub → Consumer groups → create `start-builder`. A process can
+remain running while Azure rejects its receive requests. `amqp:not-found`
+with `...|start-builder` means the group is missing; a producer's successful
+send does not prove the consumer is connected. The consumer now reports this
+with explicit setup instructions.
+
+Saved-file cards are labelled **Saved**, and their scoreboard says they are
+not a live stream. This distinguishes archive visibility from successful
+Event Hubs → consumer → Redis delivery.
+
 ### Run the live pipeline
 
 1. Start the state consumer and leave it running:
@@ -187,9 +209,15 @@ The replay utility supports two destinations:
   `match-events` hub for the `start-builder` consumer to process.
 
 Events are paced using the difference between their `recorded_at` timestamps.
-With `--speed 0`, pacing is disabled. The generator's `--stream` mode batches
-all events into one producer send; for a paced replay, use the JSONL replay
-utility.
+With `--speed 0`, pacing is disabled. The generator and replay utility share
+the same publisher: kickoff is published immediately, then each event is sent
+before waiting for the next event. A match-specific partition key preserves
+ordering. Each successful publication is printed in the terminal. Publication
+does not confirm that the consumer has processed the event.
+
+For an already processed file, sequence deduplication intentionally ignores
+events Redis has seen. Generate a fresh match for a new live demo, or explicitly
+clear only that match's Redis state before replaying from the start.
 
 ## State projection and reliability
 
@@ -228,14 +256,64 @@ The API provides:
 - `GET /api/v1/matches/<match_id>/state` — current state snapshot
 - `GET /api/v1/matches/<match_id>/stream` — SSE stream
 
-The SSE endpoint sends an initial full snapshot immediately, then sends a new
-full snapshot after each state change. It emits a heartbeat comment every
+The SSE endpoint sends an initial full snapshot immediately, then checks for
+changes once per second. It emits a heartbeat comment every
 15 seconds to keep quiet connections open. The browser's `EventSource`
 automatically reconnects if the connection drops.
 
-The "Catch me up" summary text is currently generated client-side. An Azure
-OpenAI summary service can be placed behind the same `MatchSummary` shape
-later.
+The catalogue also projects saved `data/synth/*.jsonl` files, so generated
+matches are visible without first replaying them. Redis state wins for the
+same match ID. Saved files are never ingested into Redis by the API. Set
+`MATCH_DATA_DIR` to use another directory. Saved matches remain readable when
+Redis is unavailable; the catalogue does not fetch external fixture feeds.
+
+## AI explanations and IFAB RAG
+
+Configure these values in `backend/.env`:
+
+```dotenv
+OPENAI_API_KEY=...
+LLM_MODEL=gpt-4o-mini
+EMBEDDING_MODEL=text-embedding-3-small
+EMBEDDING_DIMENSIONS=1536
+DB_URI=postgresql+psycopg://user:password@localhost/matchday
+```
+
+The existing IFAB document index uses PostgreSQL with pgvector. Once the
+database/schema and PDFs are ready, `POST /api/v1/rag/index` builds the index.
+Indexing uses the embedding API. `OPENAI_BASE_URL` may be set for a compatible
+provider. Do not put AI keys in frontend environment variables.
+
+- `POST /api/v1/matches/<id>/summary`: `window` (`since-kickoff`, `last-10`,
+  `since-joined`), optional integer `minute` and `joined_at`. AI selects source
+  fact IDs; displayed sentences and numbers are rendered from match data.
+  Responses include the source evidence and real counts of rendered facts.
+  Historical windows exclude current aggregate stats. A source-data summary
+  is returned with an explicit notice when AI is unavailable.
+- `POST /api/v1/matches/<id>/stats/<stat>/explanation`: `audience` (`new-fan`,
+  `regular`, `analyst`). AI explains the definition; match values come from
+  state. A labelled reference-definition fallback is available offline.
+- `POST /api/v1/rag/matches/<id>/events/<seq>/explanation`: retrieves IFAB
+  passages using the server's event, then returns a cited rule explanation,
+  event-data limits and source passages. Unknown citation IDs are rejected.
+  No supporting passages produces an explicit unanswerable response; retrieval
+  failures produce a retryable 503 instead of an ungrounded rule explanation.
+- `POST /api/v1/rag/search`: general law lookup using `query`, optional
+  `context`, `event`, `audience`, `limit` (1–10), and `include_chunks`.
+
+Stat and event explanations are requested only after clicking a row. Catch-up
+summaries refresh every 30 seconds during live play to let AI requests finish
+even in accelerated replays. Scrubbing and changing windows request a new
+summary. AI requests have a 20-second timeout and a bounded response cache.
+
+### Regression tests
+
+```sh
+./venv/bin/python -m unittest discover -s tests -v
+```
+
+Tests mock AI, Redis and retrieval: no external credentials, running database,
+or paid AI calls are required.
 
 ## Streaming directly to Event Hubs
 
@@ -248,6 +326,7 @@ export EVENTHUB_NAME="match-events"
 ./venv/bin/python -m synth.generator --stream
 ```
 
-The generator sends the complete generated stream in one producer batch.
-For a paced live replay, use `streaming.replay`; its timestamps are already
-spaced according to match time.
+The generator saves the match and starts streaming at 30x, flushing events
+individually. Keep `python -m streaming.consumer` running in another terminal.
+The frontend match list refreshes every four seconds; open matches get SSE
+updates checked every second. No manual page reload is needed.
